@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
+import yaml
 
+from src.config import PROJECT_ROOT, load_config
 from src.db import (
     init_db,
     get_jobs_feed,
@@ -16,6 +22,7 @@ from src.db import (
 )
 
 PORTALS = ["All", "naukri", "indeed", "foundit", "ziprecruiter", "linkedin", "glassdoor"]
+PORTAL_NAMES = ["naukri", "indeed", "foundit", "ziprecruiter", "linkedin", "glassdoor"]
 STATUS_COLORS = {
     "applied": "🟢",
     "manually_applied": "🔵",
@@ -24,12 +31,19 @@ STATUS_COLORS = {
     "failed": "🔴",
 }
 
+CV_DIR = PROJECT_ROOT / "data" / "cvs"
+ENV_PATH = PROJECT_ROOT / ".env"
+CONFIG_PATH = PROJECT_ROOT / "config" / "settings.yaml"
+
 
 def rows_to_df(rows: list) -> pd.DataFrame:
     """Convert sqlite3.Row list to DataFrame."""
     if not rows:
         return pd.DataFrame()
     return pd.DataFrame([dict(row) for row in rows])
+
+
+# ─── Page: Jobs Feed ───
 
 
 def render_jobs_feed() -> None:
@@ -69,12 +83,14 @@ def render_jobs_feed() -> None:
         hide_index=True,
     )
 
-    # Show URLs for easy access
     if "url" in df.columns:
         with st.expander("Job URLs"):
             for _, row in df.iterrows():
                 if row.get("url"):
                     st.markdown(f"- [{row['title']} @ {row['company']}]({row['url']})")
+
+
+# ─── Page: Applications ───
 
 
 def render_applications() -> None:
@@ -98,7 +114,6 @@ def render_applications() -> None:
         st.info("No applications recorded yet.")
         return
 
-    # Status metrics
     if "status" in df.columns:
         cols = st.columns(5)
         for i, s in enumerate(["applied", "manually_applied", "pending", "scrape_only", "failed"]):
@@ -108,6 +123,9 @@ def render_applications() -> None:
     display_cols = ["title", "company", "portal", "status", "selected_cv", "applied_at", "error_message"]
     available = [c for c in display_cols if c in df.columns]
     st.dataframe(df[available], use_container_width=True, hide_index=True)
+
+
+# ─── Page: Manual Apply Queue ───
 
 
 def render_manual_queue() -> None:
@@ -150,6 +168,9 @@ def render_manual_queue() -> None:
                     st.rerun()
 
 
+# ─── Page: Daily Stats ───
+
+
 def render_daily_stats() -> None:
     """Daily Stats page — run summaries and portal breakdown."""
     st.header("Daily Stats")
@@ -162,24 +183,279 @@ def render_daily_stats() -> None:
         st.info("No run data yet. Run `auto-apply --dry-run` to generate stats.")
         return
 
-    # Summary metrics
     cols = st.columns(4)
     cols[0].metric("Discovered", int(df["discovered"].sum()))
     cols[1].metric("Matched", int(df["matched"].sum()))
     cols[2].metric("Applied", int(df["applied"].sum()))
     cols[3].metric("Failed", int(df["failed"].sum()))
 
-    # Daily chart
     st.subheader("Daily Activity")
     chart_df = df.set_index("run_date")[["discovered", "matched", "applied", "failed"]]
     st.bar_chart(chart_df)
 
-    # Portal summary
     st.subheader("Portal Summary")
     summary = get_portal_summary()
     summary_df = rows_to_df(summary)
     if not summary_df.empty:
         st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+
+# ─── Page: Settings ───
+
+
+def _load_env() -> dict[str, str]:
+    """Load current .env values."""
+    env: dict[str, str] = {}
+    if ENV_PATH.exists():
+        for line in ENV_PATH.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, val = line.partition("=")
+                env[key.strip()] = val.strip()
+    return env
+
+
+def _save_env(env: dict[str, str]) -> None:
+    """Save .env file."""
+    lines = []
+    for key, val in env.items():
+        lines.append(f"{key}={val}")
+    ENV_PATH.write_text("\n".join(lines) + "\n")
+
+
+def render_settings() -> None:
+    """Settings page — CV upload, credentials, search config."""
+    st.header("Settings")
+
+    # ── Tab layout ──
+    tab_cv, tab_creds, tab_search, tab_portals = st.tabs([
+        "CV Management", "Credentials", "Search Preferences", "Portal Config",
+    ])
+
+    # ── CV Management ──
+    with tab_cv:
+        st.subheader("Upload CVs")
+        st.caption(f"CVs are stored in `{CV_DIR}`")
+
+        CV_DIR.mkdir(parents=True, exist_ok=True)
+        existing_cvs = sorted(CV_DIR.glob("*.*"))
+
+        if existing_cvs:
+            st.write("**Current CVs:**")
+            for cv_file in existing_cvs:
+                col1, col2 = st.columns([4, 1])
+                col1.write(f"- {cv_file.name} ({cv_file.stat().st_size // 1024} KB)")
+                if col2.button("Delete", key=f"del_{cv_file.name}"):
+                    cv_file.unlink()
+                    st.rerun()
+        else:
+            st.warning("No CVs uploaded yet.")
+
+        uploaded_files = st.file_uploader(
+            "Upload CV files (PDF or DOCX)",
+            type=["pdf", "docx", "doc"],
+            accept_multiple_files=True,
+            key="cv_upload",
+        )
+        if uploaded_files:
+            for f in uploaded_files:
+                dest = CV_DIR / f.name
+                dest.write_bytes(f.getvalue())
+                st.success(f"Uploaded: {f.name}")
+
+            # Update settings.yaml with new CV filenames
+            st.info("Update the CV names in **Search Preferences** or `config/settings.yaml`.")
+
+    # ── Credentials ──
+    with tab_creds:
+        st.subheader("API & Portal Credentials")
+        st.caption("Saved to `.env` file (never committed to git)")
+
+        env = _load_env()
+
+        with st.form("credentials_form"):
+            st.markdown("**Anthropic API**")
+            anthropic_key = st.text_input(
+                "ANTHROPIC_API_KEY",
+                value=env.get("ANTHROPIC_API_KEY", ""),
+                type="password",
+            )
+
+            st.markdown("---")
+            st.markdown("**Portal Logins**")
+
+            portal_creds: dict[str, tuple[str, str]] = {}
+            for portal in PORTAL_NAMES:
+                col1, col2 = st.columns(2)
+                email_key = f"{portal.upper()}_EMAIL"
+                pass_key = f"{portal.upper()}_PASSWORD"
+                with col1:
+                    email = st.text_input(
+                        f"{portal.title()} Email",
+                        value=env.get(email_key, ""),
+                        key=f"cred_{email_key}",
+                    )
+                with col2:
+                    password = st.text_input(
+                        f"{portal.title()} Password",
+                        value=env.get(pass_key, ""),
+                        type="password",
+                        key=f"cred_{pass_key}",
+                    )
+                portal_creds[portal] = (email, password)
+
+            st.markdown("---")
+            st.markdown("**Notifications (optional)**")
+            col1, col2 = st.columns(2)
+            with col1:
+                smtp_user = st.text_input("SMTP Email", value=env.get("SMTP_USER", ""), key="smtp_user")
+                smtp_pass = st.text_input("SMTP Password", value=env.get("SMTP_PASSWORD", ""), type="password", key="smtp_pass")
+            with col2:
+                notif_email = st.text_input("Notification Email", value=env.get("NOTIFICATION_EMAIL", ""), key="notif_email")
+                slack_url = st.text_input("Slack Webhook URL", value=env.get("SLACK_WEBHOOK_URL", ""), type="password", key="slack_url")
+
+            if st.form_submit_button("Save Credentials", type="primary"):
+                new_env: dict[str, str] = {}
+                if anthropic_key:
+                    new_env["ANTHROPIC_API_KEY"] = anthropic_key
+                for portal in PORTAL_NAMES:
+                    email, password = portal_creds[portal]
+                    if email:
+                        new_env[f"{portal.upper()}_EMAIL"] = email
+                    if password:
+                        new_env[f"{portal.upper()}_PASSWORD"] = password
+                if smtp_user:
+                    new_env["SMTP_HOST"] = env.get("SMTP_HOST", "smtp.gmail.com")
+                    new_env["SMTP_PORT"] = env.get("SMTP_PORT", "587")
+                    new_env["SMTP_USER"] = smtp_user
+                if smtp_pass:
+                    new_env["SMTP_PASSWORD"] = smtp_pass
+                if notif_email:
+                    new_env["NOTIFICATION_EMAIL"] = notif_email
+                if slack_url:
+                    new_env["SLACK_WEBHOOK_URL"] = slack_url
+
+                _save_env(new_env)
+                st.success("Credentials saved to .env")
+
+    # ── Search Preferences ──
+    with tab_search:
+        st.subheader("Search Configuration")
+        st.caption(f"Saved to `{CONFIG_PATH}`")
+
+        config = load_config()
+
+        with st.form("search_form"):
+            keywords = st.text_area(
+                "Search Keywords (one per line)",
+                value="\n".join(config.search.keywords),
+                height=100,
+            )
+            locations = st.text_area(
+                "Locations (one per line)",
+                value="\n".join(config.search.locations),
+                height=80,
+            )
+            experience = st.number_input(
+                "Years of Experience",
+                min_value=0, max_value=30,
+                value=config.search.experience_years,
+            )
+            excluded = st.text_area(
+                "Excluded Companies (one per line)",
+                value="\n".join(config.search.excluded_companies),
+                height=80,
+            )
+
+            st.markdown("---")
+            st.markdown("**Matching**")
+            col1, col2 = st.columns(2)
+            with col1:
+                kw_min = st.slider("Keyword Min Score", 0.0, 1.0, config.matching.keyword_min_score, 0.05)
+                ai_min = st.slider("AI Min Score", 0.0, 1.0, config.matching.ai_min_score, 0.05)
+            with col2:
+                max_per_day = st.number_input("Max Applications/Day", 1, 100, config.apply.max_applications_per_day)
+                max_per_portal = st.number_input("Max per Portal", 1, 50, config.apply.max_per_portal)
+
+            st.markdown("---")
+            st.markdown("**CV Versions**")
+            st.caption("Map each CV name to a file in data/cvs/")
+            cv_configs = []
+            for i, v in enumerate(config.cvs.versions):
+                c1, c2, c3 = st.columns(3)
+                name = c1.text_input("Name", value=v.name, key=f"cvn_{i}")
+                file = c2.text_input("File", value=v.file, key=f"cvf_{i}")
+                desc = c3.text_input("Description", value=v.description, key=f"cvd_{i}")
+                cv_configs.append({"name": name, "file": file, "description": desc})
+
+            if st.form_submit_button("Save Search Config", type="primary"):
+                # Read existing YAML and update
+                if CONFIG_PATH.exists():
+                    with open(CONFIG_PATH) as f:
+                        raw = yaml.safe_load(f) or {}
+                else:
+                    raw = {}
+
+                raw.setdefault("search", {})
+                raw["search"]["keywords"] = [k.strip() for k in keywords.strip().split("\n") if k.strip()]
+                raw["search"]["locations"] = [l.strip() for l in locations.strip().split("\n") if l.strip()]
+                raw["search"]["experience_years"] = experience
+                raw["search"]["excluded_companies"] = [c.strip() for c in excluded.strip().split("\n") if c.strip()]
+
+                raw.setdefault("matching", {})
+                raw["matching"]["keyword_min_score"] = kw_min
+                raw["matching"]["ai_min_score"] = ai_min
+
+                raw.setdefault("apply", {})
+                raw["apply"]["max_applications_per_day"] = max_per_day
+                raw["apply"]["max_per_portal"] = max_per_portal
+
+                raw.setdefault("cvs", {})
+                raw["cvs"]["directory"] = "data/cvs"
+                raw["cvs"]["versions"] = [c for c in cv_configs if c["name"]]
+
+                with open(CONFIG_PATH, "w") as f:
+                    yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
+
+                st.success("Search config saved to settings.yaml")
+
+    # ── Portal Config ──
+    with tab_portals:
+        st.subheader("Portal Configuration")
+
+        config = load_config()
+
+        with st.form("portal_form"):
+            portal_settings = {}
+            for portal in PORTAL_NAMES:
+                pc = config.portals.get(portal)
+                col1, col2, col3 = st.columns([2, 1, 1])
+                col1.write(f"**{portal.title()}**")
+                enabled = col2.checkbox("Enabled", value=pc.enabled if pc else True, key=f"pe_{portal}")
+                auto = col3.checkbox(
+                    "Auto-Apply",
+                    value=pc.auto_apply if pc else (portal not in ("linkedin", "glassdoor")),
+                    key=f"pa_{portal}",
+                    disabled=portal in ("linkedin", "glassdoor"),
+                )
+                portal_settings[portal] = {"enabled": enabled, "auto_apply": auto}
+
+            if st.form_submit_button("Save Portal Config", type="primary"):
+                if CONFIG_PATH.exists():
+                    with open(CONFIG_PATH) as f:
+                        raw = yaml.safe_load(f) or {}
+                else:
+                    raw = {}
+
+                raw["portals"] = portal_settings
+
+                with open(CONFIG_PATH, "w") as f:
+                    yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
+
+                st.success("Portal config saved to settings.yaml")
+
+
+# ─── Main ───
 
 
 def main() -> None:
@@ -192,6 +468,7 @@ def main() -> None:
         "Applications",
         "Manual Apply Queue",
         "Daily Stats",
+        "Settings",
     ])
 
     if page == "Jobs Feed":
@@ -202,6 +479,8 @@ def main() -> None:
         render_manual_queue()
     elif page == "Daily Stats":
         render_daily_stats()
+    elif page == "Settings":
+        render_settings()
 
 
 if __name__ == "__main__":
