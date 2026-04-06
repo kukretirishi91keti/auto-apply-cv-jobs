@@ -308,6 +308,33 @@ def render_settings() -> None:
                 portal_creds[portal] = (email, password)
 
             st.markdown("---")
+            st.markdown("**Job Aggregator APIs (recommended for Streamlit Cloud)**")
+            st.caption("These APIs find jobs across all portals without needing a browser.")
+            col1, col2 = st.columns(2)
+            with col1:
+                rapidapi_key = st.text_input(
+                    "RAPIDAPI_KEY (JSearch — free at rapidapi.com)",
+                    value=env.get("RAPIDAPI_KEY", ""),
+                    type="password",
+                    key="cred_rapidapi",
+                )
+                adzuna_app_id = st.text_input(
+                    "ADZUNA_APP_ID (free at developer.adzuna.com)",
+                    value=env.get("ADZUNA_APP_ID", ""),
+                    key="cred_adzuna_id",
+                )
+            with col2:
+                st.write("")  # spacer
+                st.write("")
+                st.caption("JSearch covers: LinkedIn, Indeed, Glassdoor, ZipRecruiter")
+                adzuna_app_key = st.text_input(
+                    "ADZUNA_APP_KEY",
+                    value=env.get("ADZUNA_APP_KEY", ""),
+                    type="password",
+                    key="cred_adzuna_key",
+                )
+
+            st.markdown("---")
             st.markdown("**Notifications (optional)**")
             col1, col2 = st.columns(2)
             with col1:
@@ -337,6 +364,12 @@ def render_settings() -> None:
                     new_env["NOTIFICATION_EMAIL"] = notif_email
                 if slack_url:
                     new_env["SLACK_WEBHOOK_URL"] = slack_url
+                if rapidapi_key:
+                    new_env["RAPIDAPI_KEY"] = rapidapi_key
+                if adzuna_app_id:
+                    new_env["ADZUNA_APP_ID"] = adzuna_app_id
+                if adzuna_app_key:
+                    new_env["ADZUNA_APP_KEY"] = adzuna_app_key
 
                 _save_env(new_env)
                 st.success("Credentials saved to .env")

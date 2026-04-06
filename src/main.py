@@ -217,6 +217,69 @@ async def run_pipeline(
     portal_list = portals or [name for name, pc in config.portals.items() if pc.enabled]
     portal_results: dict[str, dict[str, int]] = {}
 
+    # ── Step 1: Aggregator API search (JSearch + Adzuna) ──
+    has_aggregator = bool(creds.rapidapi_key or (creds.adzuna_app_id and creds.adzuna_app_key))
+    if has_aggregator:
+        from src.job_apis import aggregator_search
+        from src.portals.base import BasePortal
+
+        # Build search terms from config
+        terms: list[str] = []
+        for kw in config.search.keywords:
+            for part in kw.split(","):
+                term = part.strip()
+                if term and term not in terms:
+                    terms.append(term)
+        terms = terms[:10]
+
+        location = config.search.locations[0] if config.search.locations else ""
+        logger.info("=== Aggregator API search: %d terms, location=%s ===", len(terms), location)
+
+        agg_jobs = await aggregator_search(
+            terms=terms,
+            location=location,
+            rapidapi_key=creds.rapidapi_key,
+            adzuna_app_id=creds.adzuna_app_id,
+            adzuna_app_key=creds.adzuna_app_key,
+        )
+
+        # Process aggregator results like portal results
+        agg_stats = {"discovered": len(agg_jobs), "matched": 0, "applied": 0, "failed": 0}
+        logger.info("[aggregator] Discovered %d jobs via APIs", len(agg_jobs))
+
+        for job in agg_jobs:
+            job_id = insert_job(
+                portal=job.portal, external_id=job.external_id,
+                title=job.title, company=job.company,
+                location=job.location, url=job.url,
+                description=job.description, salary=job.salary,
+            )
+            if job_id is None:
+                continue
+
+            if scrape_only:
+                continue
+
+            if is_company_blocked(job.company):
+                continue
+
+            if is_already_applied(job.company, job.title):
+                continue
+
+            # Match
+            if cv_texts:
+                result = match_job(job.title, job.description, cv_texts, config, creds)
+                update_job_scores(job_id, keyword_score=result.keyword_score, ai_score=result.ai_score, selected_cv=result.recommended_cv)
+                if result.should_apply:
+                    agg_stats["matched"] += 1
+                    if dry_run:
+                        logger.info("[DRY RUN] Would apply to: %s at %s (via %s)", job.title, job.company, job.portal)
+
+        portal_results["aggregator"] = agg_stats
+    else:
+        logger.info("No aggregator API keys configured — set RAPIDAPI_KEY or ADZUNA_APP_ID+ADZUNA_APP_KEY in .env")
+
+    # ── Step 2: Per-portal direct search (fallback / supplement) ──
     for portal_name in portal_list:
         logger.info("=== Processing portal: %s ===", portal_name)
         stats = await process_portal(

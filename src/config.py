@@ -123,6 +123,11 @@ class Credentials(BaseSettings):
 
     slack_webhook_url: str = ""
 
+    # Job aggregator API keys
+    rapidapi_key: str = ""          # JSearch on RapidAPI (free tier)
+    adzuna_app_id: str = ""         # Adzuna API
+    adzuna_app_key: str = ""        # Adzuna API
+
     model_config = {"env_file": str(PROJECT_ROOT / ".env"), "extra": "ignore"}
 
 
