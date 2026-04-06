@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -13,6 +14,7 @@ from src.config import AppConfig, PROJECT_ROOT
 logger = logging.getLogger(__name__)
 
 
+@asynccontextmanager
 async def create_stealth_context(
     config: AppConfig,
     portal_name: str,
