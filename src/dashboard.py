@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import shutil
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -455,6 +458,171 @@ def render_settings() -> None:
                 st.success("Portal config saved to settings.yaml")
 
 
+# ─── Page: Run ───
+
+
+def render_run_page() -> None:
+    """Run page — trigger dry-runs and real applications from the dashboard."""
+    st.header("Run Job Search & Apply")
+
+    # Initialize session state
+    if "run_process" not in st.session_state:
+        st.session_state.run_process = None
+    if "run_log" not in st.session_state:
+        st.session_state.run_log = ""
+    if "run_status" not in st.session_state:
+        st.session_state.run_status = "idle"  # idle, running, done, failed
+
+    is_running = st.session_state.run_status == "running"
+
+    # ── Controls ──
+    with st.container(border=True):
+        st.subheader("Configuration")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            mode = st.radio(
+                "Mode",
+                ["Dry Run (search only, no applications)", "Real Apply", "Scrape Only (discover jobs)"],
+                key="run_mode",
+                disabled=is_running,
+            )
+            portals = st.multiselect(
+                "Portals",
+                PORTAL_NAMES,
+                default=PORTAL_NAMES,
+                key="run_portals",
+                disabled=is_running,
+            )
+        with col2:
+            limit = st.number_input(
+                "Max applications per portal",
+                min_value=1, max_value=50, value=5,
+                key="run_limit",
+                disabled=is_running,
+            )
+            headless = st.checkbox("Headless browser (no visible window)", value=True, key="run_headless", disabled=is_running)
+
+        # ── Start / Stop buttons ──
+        btn_col1, btn_col2, _ = st.columns([1, 1, 3])
+        with btn_col1:
+            start_clicked = st.button(
+                "Start Run", type="primary", disabled=is_running or not portals, key="start_btn",
+            )
+        with btn_col2:
+            stop_clicked = st.button(
+                "Stop Run", disabled=not is_running, key="stop_btn",
+            )
+
+    # ── Handle Stop ──
+    if stop_clicked and st.session_state.run_process:
+        try:
+            st.session_state.run_process.terminate()
+            st.session_state.run_process.wait(timeout=5)
+        except Exception:
+            try:
+                st.session_state.run_process.kill()
+            except Exception:
+                pass
+        st.session_state.run_status = "idle"
+        st.session_state.run_log += "\n--- Run stopped by user ---\n"
+        st.session_state.run_process = None
+        st.rerun()
+
+    # ── Handle Start ──
+    if start_clicked and portals:
+        # Build CLI command
+        cmd = [sys.executable, "-m", "src"]
+
+        if "Dry Run" in mode:
+            cmd.append("--dry-run")
+        elif "Scrape Only" in mode:
+            cmd.append("--scrape-only")
+
+        for portal in portals:
+            cmd.extend(["--portal", portal])
+
+        cmd.extend(["--limit", str(limit)])
+
+        st.session_state.run_log = f"$ {' '.join(cmd)}\n\n"
+        st.session_state.run_status = "running"
+
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                cwd=str(PROJECT_ROOT),
+            )
+            st.session_state.run_process = process
+        except Exception as e:
+            st.session_state.run_status = "failed"
+            st.session_state.run_log += f"Failed to start: {e}\n"
+            st.session_state.run_process = None
+
+    # ── Live log output ──
+    if st.session_state.run_status == "running" and st.session_state.run_process:
+        process = st.session_state.run_process
+
+        status_container = st.empty()
+        log_container = st.empty()
+
+        status_container.info("Running... please wait. Logs will appear below.")
+
+        # Read all available output
+        lines_read = 0
+        while True:
+            line = process.stdout.readline()
+            if line:
+                st.session_state.run_log += line
+                lines_read += 1
+            else:
+                if process.poll() is not None:
+                    break
+                # Small sleep to avoid busy-waiting, then check again
+                time.sleep(0.5)
+                continue
+
+            # Update display every few lines
+            if lines_read % 3 == 0:
+                log_container.code(st.session_state.run_log, language="log")
+
+        # Read any remaining output
+        remaining = process.stdout.read()
+        if remaining:
+            st.session_state.run_log += remaining
+
+        # Final status
+        return_code = process.returncode
+        st.session_state.run_process = None
+
+        if return_code == 0:
+            st.session_state.run_status = "done"
+            st.session_state.run_log += "\n--- Run completed successfully ---\n"
+        else:
+            st.session_state.run_status = "failed"
+            st.session_state.run_log += f"\n--- Run failed (exit code {return_code}) ---\n"
+
+        status_container.empty()
+
+    # ── Show status and log ──
+    if st.session_state.run_status == "done":
+        st.success("Run completed successfully! Check 'Jobs Feed' and 'Applications' pages for results.")
+    elif st.session_state.run_status == "failed":
+        st.error("Run failed. Check the log below for details.")
+
+    if st.session_state.run_log:
+        st.subheader("Run Log")
+        st.code(st.session_state.run_log, language="log")
+
+        if st.button("Clear Log"):
+            st.session_state.run_log = ""
+            st.session_state.run_status = "idle"
+            st.rerun()
+
+
 # ─── Main ───
 
 
@@ -464,6 +632,7 @@ def main() -> None:
 
     st.sidebar.title("Auto-Apply CV Jobs")
     page = st.sidebar.radio("Navigation", [
+        "Run",
         "Jobs Feed",
         "Applications",
         "Manual Apply Queue",
@@ -471,7 +640,9 @@ def main() -> None:
         "Settings",
     ])
 
-    if page == "Jobs Feed":
+    if page == "Run":
+        render_run_page()
+    elif page == "Jobs Feed":
         render_jobs_feed()
     elif page == "Applications":
         render_applications()
