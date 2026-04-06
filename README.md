@@ -15,6 +15,10 @@ Automated job application tool that scrapes 6 job portals daily, matches your CV
 ## Quick Start
 
 ```bash
+# 0. Clone and enter the project
+git clone https://github.com/kukretirishi91keti/auto-apply-cv-jobs.git
+cd auto-apply-cv-jobs
+
 # 1. Install
 pip install -e ".[dev]"
 playwright install chromium
@@ -26,19 +30,22 @@ cp .env.example .env
 # Place your 3 CV files in data/cvs/
 
 # 3. Dry run (no actual applications)
-python -m src.main --dry-run
+auto-apply --dry-run
 
 # 4. Run for real
-python -m src.main
+auto-apply
 
 # 5. Run on schedule (daily at configured time)
-python -m src.main --schedule
+auto-apply --schedule
 ```
+
+> **Note:** After `pip install -e .`, the `auto-apply` command works from any directory.
+> You can also use `python -m src.main` from within the project folder.
 
 ## CLI Options
 
 ```
-python -m src.main [OPTIONS]
+auto-apply [OPTIONS]
 
   --dry-run         Scrape and match jobs, but don't apply
   --portal NAME     Run only a specific portal (naukri, indeed, etc.)
