@@ -18,6 +18,7 @@ data/cvs/*.pdf
 data/cvs/*.docx
 data/screenshots/*.png
 *.db
+*.log
 
 # Browser state
 browser_state/
