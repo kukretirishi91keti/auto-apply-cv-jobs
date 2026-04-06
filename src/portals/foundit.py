@@ -86,11 +86,11 @@ class FounditPortal(BasePortal):
         all_jobs: list[JobListing] = []
         seen_ids: set[str] = set()
 
-        keywords = self.config.search.keywords[:5]
-        if not keywords:
-            keywords = ["jobs"]
+        terms = self.get_search_terms(max_terms=8)
+        if not terms:
+            terms = ["jobs"]
 
-        for keyword in keywords:
+        for keyword in terms:
             try:
                 jobs = await self._search_keyword(keyword)
                 for job in jobs:
@@ -100,7 +100,7 @@ class FounditPortal(BasePortal):
             except Exception as e:
                 self.logger.warning("Foundit search failed for '%s': %s", keyword, e)
 
-        self.logger.info("Foundit total: %d unique jobs from %d keywords", len(all_jobs), len(keywords))
+        self.logger.info("Foundit total: %d unique jobs from %d terms", len(all_jobs), len(terms))
         return all_jobs
 
     async def _search_keyword(self, keyword: str) -> list[JobListing]:

@@ -93,12 +93,12 @@ class NaukriPortal(BasePortal):
         seen_ids: set[str] = set()
         location = self.config.search.locations[0] if self.config.search.locations else ""
 
-        # Search per keyword (max 5 to avoid rate limiting)
-        keywords = self.config.search.keywords[:5]
-        if not keywords:
-            keywords = ["jobs"]
+        # Search per term (split comma-separated keywords)
+        terms = self.get_search_terms(max_terms=8)
+        if not terms:
+            terms = ["jobs"]
 
-        for keyword in keywords:
+        for keyword in terms:
             try:
                 jobs = await self._search_keyword(keyword, location)
                 for job in jobs:
@@ -108,28 +108,30 @@ class NaukriPortal(BasePortal):
             except Exception as e:
                 self.logger.warning("Naukri search failed for '%s': %s", keyword, e)
 
-        self.logger.info("Naukri total: %d unique jobs from %d keywords", len(all_jobs), len(keywords))
+        self.logger.info("Naukri total: %d unique jobs from %d terms", len(all_jobs), len(terms))
         return all_jobs
 
     async def _search_keyword(self, keyword: str, location: str) -> list[JobListing]:
-        """Search for a single keyword via Naukri HTML page."""
-        jobs: list[JobListing] = []
+        """Search for a single keyword — try API first, then HTML fallback."""
+        # Try API first (returns structured JSON, works without JS rendering)
+        jobs = await self._search_api(keyword, location)
+        if jobs:
+            return jobs
 
-        # Build Naukri search URL (their standard format)
-        slug = quote_plus(keyword.lower().replace(" ", "-"))
-        loc_slug = quote_plus(location.lower().replace(" ", "-")) if location else ""
-        search_url = f"{self.BASE_URL}/{slug}-jobs"
+        # Fallback: HTML scrape
+        slug = keyword.lower().replace(" ", "-").replace(",", "")
+        loc_slug = location.lower().replace(" ", "-") if location else ""
+        search_url = f"{self.BASE_URL}/{quote_plus(slug)}-jobs"
         if loc_slug:
-            search_url += f"-in-{loc_slug}"
+            search_url += f"-in-{quote_plus(loc_slug)}"
         if self.config.search.experience_years:
             search_url += f"?experience={self.config.search.experience_years}"
 
         async with httpx.AsyncClient(headers=HEADERS, timeout=30, follow_redirects=True) as client:
             resp = await client.get(search_url)
-            # Don't raise — parse whatever we get
             if resp.status_code >= 400:
-                self.logger.debug("Naukri returned %d for '%s', trying API", resp.status_code, keyword)
-                return await self._search_api(keyword, location)
+                self.logger.debug("Naukri HTML returned %d for '%s'", resp.status_code, keyword)
+                return []
 
         soup = BeautifulSoup(resp.text, "html.parser")
 

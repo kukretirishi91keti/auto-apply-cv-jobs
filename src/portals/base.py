@@ -71,3 +71,18 @@ class BasePortal(ABC):
     def get_credential(self, key: str) -> str:
         """Get a credential by portal-specific key."""
         return getattr(self.creds, f"{self.name}_{key}", "")
+
+    def get_search_terms(self, max_terms: int = 10) -> list[str]:
+        """Split configured keywords into individual simple search terms.
+
+        Keywords like "AVP, Growth Leader, P&L" get split into
+        ["AVP", "Growth Leader", "P&L"] — each becomes a separate search.
+        """
+        terms: list[str] = []
+        for kw in self.config.search.keywords:
+            # Split on commas (each keyword may be comma-separated)
+            for part in kw.split(","):
+                term = part.strip()
+                if term and term not in terms:
+                    terms.append(term)
+        return terms[:max_terms]
