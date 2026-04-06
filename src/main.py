@@ -258,7 +258,16 @@ def cli() -> None:
     parser.add_argument("--limit", type=int, help="Max applications per portal")
     parser.add_argument("--schedule", action="store_true", help="Run on daily schedule")
     parser.add_argument("--scrape-only", action="store_true", help="Only scrape, skip matching/applying")
+    parser.add_argument("--dashboard", action="store_true", help="Launch web dashboard")
     args = parser.parse_args()
+
+    if args.dashboard:
+        import subprocess
+        import sys
+        dashboard_path = str(Path(__file__).parent / "dashboard.py")
+        logger.info("Launching dashboard at http://localhost:8501")
+        subprocess.run([sys.executable, "-m", "streamlit", "run", dashboard_path, "--server.headless", "true"])
+        return
 
     if args.schedule:
         run_scheduled()

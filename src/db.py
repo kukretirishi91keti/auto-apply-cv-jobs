@@ -72,6 +72,21 @@ def init_db(db_path: Path | None = None) -> None:
     path = db_path or DB_PATH
     with get_connection(path) as conn:
         conn.executescript(SCHEMA)
+        _run_migrations(conn)
+
+
+MIGRATIONS = [
+    "ALTER TABLE applications ADD COLUMN notes TEXT DEFAULT ''",
+]
+
+
+def _run_migrations(conn: sqlite3.Connection) -> None:
+    """Apply schema migrations (idempotent)."""
+    for sql in MIGRATIONS:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass  # column already exists
 
 
 @contextmanager
@@ -198,3 +213,141 @@ def finish_daily_run(run_id: int, discovered: int, matched: int, applied: int, f
                WHERE id = ?""",
             (discovered, matched, applied, failed, run_id),
         )
+
+
+# --- Dashboard query functions ---
+
+
+def get_jobs_feed(
+    portal: str | None = None,
+    min_score: float | None = None,
+    days: int = 7,
+    limit: int = 200,
+) -> list[sqlite3.Row]:
+    """Get recent jobs with optional filters, joined with application status."""
+    with get_connection() as conn:
+        conditions = ["j.discovered_at >= datetime('now', ?)"]
+        params: list[Any] = [f"-{days} days"]
+
+        if portal:
+            conditions.append("j.portal = ?")
+            params.append(portal)
+        if min_score is not None:
+            conditions.append("(j.keyword_score >= ? OR j.keyword_score IS NULL)")
+            params.append(min_score)
+
+        where = " AND ".join(conditions)
+        params.append(limit)
+
+        return conn.execute(
+            f"""SELECT j.*, a.status AS app_status, a.applied_at
+                FROM jobs j
+                LEFT JOIN applications a ON j.id = a.job_id
+                WHERE {where}
+                ORDER BY j.discovered_at DESC
+                LIMIT ?""",
+            params,
+        ).fetchall()
+
+
+def get_applications(
+    portal: str | None = None,
+    status: str | None = None,
+    days: int = 30,
+    limit: int = 200,
+) -> list[sqlite3.Row]:
+    """Get application history joined with job details."""
+    with get_connection() as conn:
+        conditions = ["a.applied_at >= datetime('now', ?)"]
+        params: list[Any] = [f"-{days} days"]
+
+        if portal:
+            conditions.append("a.portal = ?")
+            params.append(portal)
+        if status:
+            conditions.append("a.status = ?")
+            params.append(status)
+
+        where = " AND ".join(conditions)
+        params.append(limit)
+
+        return conn.execute(
+            f"""SELECT a.id AS app_id, a.status, a.applied_at, a.error_message, a.notes,
+                       j.title, j.company, j.location, j.portal, j.url, j.selected_cv,
+                       j.keyword_score, j.ai_score
+                FROM applications a
+                JOIN jobs j ON a.job_id = j.id
+                WHERE {where}
+                ORDER BY a.applied_at DESC
+                LIMIT ?""",
+            params,
+        ).fetchall()
+
+
+def get_manual_apply_queue() -> list[sqlite3.Row]:
+    """Get scrape-only jobs (LinkedIn/Glassdoor) awaiting manual application."""
+    with get_connection() as conn:
+        return conn.execute(
+            """SELECT j.id AS job_id, j.title, j.company, j.location, j.portal,
+                      j.url, j.salary, j.keyword_score, j.ai_score, j.discovered_at,
+                      a.status AS app_status
+               FROM jobs j
+               LEFT JOIN applications a ON j.id = a.job_id
+               WHERE j.portal IN ('linkedin', 'glassdoor')
+                 AND (a.status IS NULL OR a.status = 'scrape_only')
+               ORDER BY j.discovered_at DESC""",
+        ).fetchall()
+
+
+def mark_manually_applied(job_id: int, notes: str = "") -> None:
+    """Mark a scrape-only job as manually applied."""
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT id FROM applications WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE applications SET status = 'manually_applied', notes = ? WHERE job_id = ?",
+                (notes, job_id),
+            )
+        else:
+            portal = conn.execute(
+                "SELECT portal FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            conn.execute(
+                "INSERT INTO applications (job_id, portal, status, notes) VALUES (?, ?, 'manually_applied', ?)",
+                (job_id, portal[0] if portal else "unknown", notes),
+            )
+
+
+def get_daily_stats(days: int = 14) -> list[sqlite3.Row]:
+    """Get daily aggregated run stats."""
+    with get_connection() as conn:
+        return conn.execute(
+            """SELECT run_date,
+                      SUM(jobs_discovered) AS discovered,
+                      SUM(jobs_matched) AS matched,
+                      SUM(jobs_applied) AS applied,
+                      SUM(jobs_failed) AS failed
+               FROM daily_runs
+               WHERE run_date >= date('now', ?)
+               GROUP BY run_date
+               ORDER BY run_date DESC""",
+            (f"-{days} days",),
+        ).fetchall()
+
+
+def get_portal_summary() -> list[sqlite3.Row]:
+    """Get per-portal summary totals."""
+    with get_connection() as conn:
+        return conn.execute(
+            """SELECT j.portal,
+                      COUNT(DISTINCT j.id) AS total_jobs,
+                      COUNT(DISTINCT CASE WHEN a.status = 'applied' THEN a.id END) AS total_applied,
+                      COUNT(DISTINCT CASE WHEN a.status = 'failed' THEN a.id END) AS total_failed,
+                      MAX(j.discovered_at) AS last_discovered
+               FROM jobs j
+               LEFT JOIN applications a ON j.id = a.job_id
+               GROUP BY j.portal
+               ORDER BY total_jobs DESC""",
+        ).fetchall()

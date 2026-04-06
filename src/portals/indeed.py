@@ -86,15 +86,34 @@ class IndeedPortal(BasePortal):
             await page.wait_for_load_state("networkidle")
             await medium_pause()
 
-            job_cards = await page.query_selector_all("div.job_seen_beacon, div.jobsearch-ResultsList > div, td.resultContent")
-            self.logger.info("Found %d job cards on Indeed", len(job_cards))
+            # Wait for results container to render
+            try:
+                await page.wait_for_selector(
+                    'div#mosaic-provider-jobcards, div.jobsearch-ResultsList, div[id*="mosaic"]',
+                    timeout=10000,
+                )
+            except Exception:
+                self.logger.warning("Indeed results container not found, trying anyway")
+
+            job_cards = await page.query_selector_all(
+                'div.job_seen_beacon, li[data-testid="slider_item"], div.cardOutline, td.resultContent'
+            )
+            self.logger.info("Found %d job cards on Indeed (Playwright)", len(job_cards))
 
             for card in job_cards[:25]:
                 try:
-                    title_el = await card.query_selector("h2.jobTitle a, a.jcs-JobTitle")
-                    company_el = await card.query_selector("span[data-testid='company-name'], span.companyName")
-                    location_el = await card.query_selector("div[data-testid='text-location'], div.companyLocation")
-                    salary_el = await card.query_selector("div.salary-snippet-container, div.metadata.salary-snippet-container")
+                    title_el = await card.query_selector(
+                        'a[data-testid="jobTitle"], h2.jobTitle a, a.jcs-JobTitle'
+                    )
+                    company_el = await card.query_selector(
+                        "span[data-testid='company-name'], span.companyName"
+                    )
+                    location_el = await card.query_selector(
+                        "div[data-testid='text-location'], div.companyLocation"
+                    )
+                    salary_el = await card.query_selector(
+                        "[data-testid='salaryRange'], div.salary-snippet-container"
+                    )
 
                     if not title_el:
                         continue
@@ -119,8 +138,56 @@ class IndeedPortal(BasePortal):
                     ))
                 except Exception as e:
                     self.logger.debug("Error parsing Indeed job card: %s", e)
+
+            # BeautifulSoup fallback if Playwright selectors missed everything
+            if not jobs:
+                self.logger.info("Playwright selectors found 0 jobs, trying BeautifulSoup fallback")
+                jobs = await self._bs4_fallback(page)
+
         except Exception as e:
             self.logger.error("Indeed search error: %s", e)
+
+        return jobs
+
+    async def _bs4_fallback(self, page: Page) -> list[JobListing]:
+        """Parse job cards from raw HTML using BeautifulSoup."""
+        from bs4 import BeautifulSoup
+
+        jobs: list[JobListing] = []
+        try:
+            html = await page.content()
+            soup = BeautifulSoup(html, "html.parser")
+
+            # Try data-testid based selectors first
+            title_links = soup.select('[data-testid="jobTitle"]')
+            if not title_links:
+                title_links = soup.select("h2.jobTitle a, a.jcs-JobTitle")
+
+            self.logger.info("BeautifulSoup found %d title elements", len(title_links))
+
+            for el in title_links[:25]:
+                title = el.get_text(strip=True)
+                url_path = el.get("href", "")
+                url = f"{self.BASE_URL}{url_path}" if url_path.startswith("/") else url_path
+
+                parent = el.find_parent("td") or el.find_parent("div", class_=True)
+                company_el = parent.select_one('[data-testid="company-name"], span.companyName') if parent else None
+                location_el = parent.select_one('[data-testid="text-location"], div.companyLocation') if parent else None
+                company = company_el.get_text(strip=True) if company_el else "Unknown"
+                loc = location_el.get_text(strip=True) if location_el else ""
+
+                ext_id = url_path.split("jk=")[-1][:16] if "jk=" in url_path else title[:20]
+
+                jobs.append(JobListing(
+                    portal=self.name,
+                    external_id=ext_id,
+                    title=title,
+                    company=company,
+                    location=loc,
+                    url=url,
+                ))
+        except Exception as e:
+            self.logger.error("BeautifulSoup fallback error: %s", e)
 
         return jobs
 
