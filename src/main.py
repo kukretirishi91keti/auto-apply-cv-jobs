@@ -254,7 +254,7 @@ def cli() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(description="Auto-Apply CV Jobs")
     parser.add_argument("--dry-run", action="store_true", help="Scrape and match, but don't apply")
-    parser.add_argument("--portal", type=str, help="Run only a specific portal")
+    parser.add_argument("--portal", type=str, action="append", help="Run only specific portal(s); repeat for multiple")
     parser.add_argument("--limit", type=int, help="Max applications per portal")
     parser.add_argument("--schedule", action="store_true", help="Run on daily schedule")
     parser.add_argument("--scrape-only", action="store_true", help="Only scrape, skip matching/applying")
@@ -272,7 +272,7 @@ def cli() -> None:
     if args.schedule:
         run_scheduled()
     else:
-        portals = [args.portal] if args.portal else None
+        portals = args.portal if args.portal else None
         run_once(portals=portals, dry_run=args.dry_run, scrape_only=args.scrape_only, limit=args.limit)
 
 
