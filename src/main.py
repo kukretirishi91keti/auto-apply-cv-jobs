@@ -56,7 +56,11 @@ async def process_portal(
         logger.info("Portal %s is disabled, skipping", portal_name)
         return stats
 
-    portal_cls = ALL_PORTALS.get(portal_name)
+    try:
+        portal_cls = ALL_PORTALS.get(portal_name)
+    except Exception as e:
+        logger.error("Cannot load portal %s: %s", portal_name, e)
+        return stats
     if not portal_cls:
         logger.error("Unknown portal: %s", portal_name)
         return stats

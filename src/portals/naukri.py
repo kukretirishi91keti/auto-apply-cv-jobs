@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import TYPE_CHECKING
 from urllib.parse import quote_plus
 
-from playwright.async_api import Page
+if TYPE_CHECKING:
+    from playwright.async_api import Page
 
 from src.config import AppConfig, Credentials
 from src.portals.base import BasePortal, JobListing

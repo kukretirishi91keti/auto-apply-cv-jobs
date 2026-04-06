@@ -465,6 +465,23 @@ def render_run_page() -> None:
     """Run page — trigger dry-runs and real applications from the dashboard."""
     st.header("Run Job Search & Apply")
 
+    # Detect Streamlit Cloud (no playwright available)
+    _on_cloud = os.path.exists("/mount/src")
+    try:
+        import playwright  # noqa: F401
+        _has_playwright = True
+    except ImportError:
+        _has_playwright = False
+
+    if _on_cloud or not _has_playwright:
+        st.warning(
+            "**Browser automation (Playwright) is not available on Streamlit Cloud.**\n\n"
+            "Job scraping requires a browser. To run searches:\n"
+            "- Run locally: `pip install playwright && playwright install chromium && auto-apply --dashboard`\n"
+            "- Or use a VPS/cloud VM with a browser installed.\n\n"
+            "You can still use **Jobs Feed**, **Applications**, **LinkedIn Optimizer**, and **Settings** on Streamlit Cloud."
+        )
+
     # Initialize session state
     if "run_process" not in st.session_state:
         st.session_state.run_process = None
