@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote_plus
 
 import httpx
+from bs4 import BeautifulSoup
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -23,9 +24,8 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
     ),
-    "Accept": "application/json",
-    "appid": "109",
-    "systemid": "Naukri",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
 }
 
 
@@ -34,7 +34,6 @@ class NaukriPortal(BasePortal):
     auto_apply_supported = True
 
     BASE_URL = "https://www.naukri.com"
-    API_URL = "https://www.naukri.com/jobapi/v3/search"
     LOGIN_URL = "https://www.naukri.com/nlogin/login"
 
     def __init__(self, config: AppConfig, creds: Credentials):
@@ -89,16 +88,140 @@ class NaukriPortal(BasePortal):
             return False
 
     async def search_jobs(self) -> list[JobListing]:
-        """Search using Naukri's public JSON API — no browser needed."""
-        jobs: list[JobListing] = []
-        keywords = " ".join(self.config.search.keywords)
+        """Search Naukri via HTML scraping — one request per keyword."""
+        all_jobs: list[JobListing] = []
+        seen_ids: set[str] = set()
         location = self.config.search.locations[0] if self.config.search.locations else ""
 
+        # Search per keyword (max 5 to avoid rate limiting)
+        keywords = self.config.search.keywords[:5]
+        if not keywords:
+            keywords = ["jobs"]
+
+        for keyword in keywords:
+            try:
+                jobs = await self._search_keyword(keyword, location)
+                for job in jobs:
+                    if job.external_id not in seen_ids:
+                        seen_ids.add(job.external_id)
+                        all_jobs.append(job)
+            except Exception as e:
+                self.logger.warning("Naukri search failed for '%s': %s", keyword, e)
+
+        self.logger.info("Naukri total: %d unique jobs from %d keywords", len(all_jobs), len(keywords))
+        return all_jobs
+
+    async def _search_keyword(self, keyword: str, location: str) -> list[JobListing]:
+        """Search for a single keyword via Naukri HTML page."""
+        jobs: list[JobListing] = []
+
+        # Build Naukri search URL (their standard format)
+        slug = quote_plus(keyword.lower().replace(" ", "-"))
+        loc_slug = quote_plus(location.lower().replace(" ", "-")) if location else ""
+        search_url = f"{self.BASE_URL}/{slug}-jobs"
+        if loc_slug:
+            search_url += f"-in-{loc_slug}"
+        if self.config.search.experience_years:
+            search_url += f"?experience={self.config.search.experience_years}"
+
+        async with httpx.AsyncClient(headers=HEADERS, timeout=30, follow_redirects=True) as client:
+            resp = await client.get(search_url)
+            # Don't raise — parse whatever we get
+            if resp.status_code >= 400:
+                self.logger.debug("Naukri returned %d for '%s', trying API", resp.status_code, keyword)
+                return await self._search_api(keyword, location)
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Naukri embeds job data in script tags as JSON
+        import json
+        for script in soup.select('script[type="application/ld+json"]'):
+            try:
+                ld = json.loads(script.string or "")
+                if isinstance(ld, dict) and ld.get("@type") == "ItemList":
+                    for item in ld.get("itemListElement", []):
+                        ji = item.get("item", item)
+                        title = ji.get("title", ji.get("name", "")).strip()
+                        company = ""
+                        org = ji.get("hiringOrganization", {})
+                        if isinstance(org, dict):
+                            company = org.get("name", "Unknown")
+                        loc = ""
+                        jl = ji.get("jobLocation", {})
+                        if isinstance(jl, dict):
+                            addr = jl.get("address", {})
+                            if isinstance(addr, dict):
+                                loc = addr.get("addressLocality", "")
+                        url = ji.get("url", "")
+                        ext_id_match = re.search(r"-(\d{5,})", url)
+                        ext_id = ext_id_match.group(1) if ext_id_match else title[:20]
+                        salary = ji.get("baseSalary", {})
+                        if isinstance(salary, dict):
+                            sal_val = salary.get("value", {})
+                            if isinstance(sal_val, dict):
+                                salary = f"{sal_val.get('minValue', '')}-{sal_val.get('maxValue', '')}"
+                            else:
+                                salary = str(salary)
+                        else:
+                            salary = str(salary) if salary else ""
+
+                        if title:
+                            jobs.append(JobListing(
+                                portal=self.name,
+                                external_id=str(ext_id),
+                                title=title,
+                                company=company,
+                                location=loc,
+                                url=url,
+                                salary=salary,
+                            ))
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        # Fallback: parse HTML job cards
+        if not jobs:
+            cards = soup.select("article.jobTuple, div.srp-jobtuple-wrapper, div.cust-job-tuple, div.jobTupleHeader")
+            for card in cards[:30]:
+                try:
+                    title_el = card.select_one("a.title, a.jobTitle, a[class*='title']")
+                    if not title_el:
+                        continue
+                    title = title_el.get_text(strip=True)
+                    url = title_el.get("href", "")
+                    company_el = card.select_one("a.subTitle, a.comp-name, a[class*='comp']")
+                    company = company_el.get_text(strip=True) if company_el else "Unknown"
+                    location_el = card.select_one("span.locWdth, span.loc-wrap, li.location, span[class*='loc']")
+                    loc = location_el.get_text(strip=True) if location_el else ""
+                    salary_el = card.select_one("span.salary, li.salary, span[class*='sal']")
+                    sal = salary_el.get_text(strip=True) if salary_el else ""
+                    ext_id_match = re.search(r"-(\d{5,})", url)
+                    ext_id = ext_id_match.group(1) if ext_id_match else title[:20]
+                    jobs.append(JobListing(
+                        portal=self.name, external_id=str(ext_id),
+                        title=title, company=company, location=loc, url=url, salary=sal,
+                    ))
+                except Exception:
+                    continue
+
+        self.logger.info("Naukri found %d jobs for '%s'", len(jobs), keyword)
+        return jobs
+
+    async def _search_api(self, keyword: str, location: str) -> list[JobListing]:
+        """Fallback: try the Naukri JSON API."""
+        jobs: list[JobListing] = []
+        api_headers = {
+            **HEADERS,
+            "Accept": "application/json",
+            "appid": "109",
+            "systemid": "Naukri",
+            "gid": "LOCATION,INDUSTRY,EDUCATION,FAREA_ROLE",
+            "clientId": "d3skt0p",
+        }
         params = {
-            "noOfResults": 30,
+            "noOfResults": 20,
             "urlType": "search_by_keyword",
             "searchType": "adv",
-            "keyword": keywords,
+            "keyword": keyword,
             "location": location,
             "pageNo": 1,
         }
@@ -106,42 +229,29 @@ class NaukriPortal(BasePortal):
             params["experience"] = self.config.search.experience_years
 
         try:
-            async with httpx.AsyncClient(headers=HEADERS, timeout=30) as client:
-                resp = await client.get(self.API_URL, params=params)
-                resp.raise_for_status()
+            async with httpx.AsyncClient(headers=api_headers, timeout=30) as client:
+                resp = await client.get("https://www.naukri.com/jobapi/v3/search", params=params)
+                if resp.status_code >= 400:
+                    return jobs
                 data = resp.json()
 
-            job_details = data.get("jobDetails", [])
-            self.logger.info("Naukri API returned %d jobs", len(job_details))
-
-            for item in job_details:
-                try:
-                    title = item.get("title", "").strip()
-                    company = item.get("companyName", "Unknown").strip()
-                    loc = item.get("placeholders", [{}])[0].get("label", "") if item.get("placeholders") else ""
-                    salary = item.get("placeholders", [{}])[1].get("label", "") if len(item.get("placeholders", [])) > 1 else ""
-                    jd_url = item.get("jdURL", "")
-                    url = f"{self.BASE_URL}{jd_url}" if jd_url.startswith("/") else jd_url
-                    ext_id = item.get("jobId", "") or str(hash(title + company))[:12]
-
-                    if not title:
-                        continue
-
+            for item in data.get("jobDetails", []):
+                title = item.get("title", "").strip()
+                company = item.get("companyName", "Unknown").strip()
+                placeholders = item.get("placeholders", [])
+                loc = placeholders[0].get("label", "") if placeholders else ""
+                salary = placeholders[1].get("label", "") if len(placeholders) > 1 else ""
+                jd_url = item.get("jdURL", "")
+                url = f"{self.BASE_URL}{jd_url}" if jd_url.startswith("/") else jd_url
+                ext_id = str(item.get("jobId", "")) or title[:20]
+                if title:
                     jobs.append(JobListing(
-                        portal=self.name,
-                        external_id=str(ext_id),
-                        title=title,
-                        company=company,
-                        location=loc,
-                        url=url,
-                        salary=salary,
+                        portal=self.name, external_id=ext_id,
+                        title=title, company=company, location=loc, url=url, salary=salary,
                         description=item.get("jobDescription", ""),
                     ))
-                except Exception as e:
-                    self.logger.debug("Error parsing Naukri API job: %s", e)
-
         except Exception as e:
-            self.logger.error("Naukri API search error: %s", e)
+            self.logger.debug("Naukri API fallback failed: %s", e)
 
         return jobs
 
@@ -209,10 +319,9 @@ class NaukriPortal(BasePortal):
                     continue
 
     async def health_check(self) -> bool:
-        """Quick check via HTTP — no browser needed."""
         try:
-            async with httpx.AsyncClient(headers=HEADERS, timeout=15) as client:
-                resp = await client.get(self.API_URL, params={"noOfResults": 1, "keyword": "test"})
+            async with httpx.AsyncClient(headers=HEADERS, timeout=15, follow_redirects=True) as client:
+                resp = await client.get(f"{self.BASE_URL}/software-engineer-jobs")
                 return resp.status_code == 200
         except Exception as e:
             self.logger.error("Naukri health check failed: %s", e)

@@ -25,6 +25,13 @@ HEADERS = {
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1",
 }
 
 
@@ -89,58 +96,112 @@ class IndeedPortal(BasePortal):
             return False
 
     async def search_jobs(self) -> list[JobListing]:
-        """Search using HTTP + BeautifulSoup — no browser needed."""
+        """Search Indeed per keyword via HTTP — no browser needed."""
+        all_jobs: list[JobListing] = []
+        seen_ids: set[str] = set()
+
+        keywords = self.config.search.keywords[:5]
+        if not keywords:
+            keywords = ["jobs"]
+
+        for keyword in keywords:
+            try:
+                jobs = await self._search_keyword(keyword)
+                for job in jobs:
+                    if job.external_id not in seen_ids:
+                        seen_ids.add(job.external_id)
+                        all_jobs.append(job)
+            except Exception as e:
+                self.logger.warning("Indeed search failed for '%s': %s", keyword, e)
+
+        self.logger.info("Indeed total: %d unique jobs from %d keywords", len(all_jobs), len(keywords))
+        return all_jobs
+
+    async def _search_keyword(self, keyword: str) -> list[JobListing]:
+        """Search for a single keyword."""
         jobs: list[JobListing] = []
-        keywords = " ".join(self.config.search.keywords)
         location = self.config.search.locations[0] if self.config.search.locations else ""
 
-        search_url = f"{self.BASE_URL}/jobs?q={quote_plus(keywords)}&l={quote_plus(location)}&limit=25"
+        search_url = f"{self.BASE_URL}/jobs"
+        params = {"q": keyword, "l": location, "limit": 15}
 
-        try:
-            async with httpx.AsyncClient(headers=HEADERS, timeout=30, follow_redirects=True) as client:
-                resp = await client.get(search_url)
-                resp.raise_for_status()
+        async with httpx.AsyncClient(headers=HEADERS, timeout=30, follow_redirects=True) as client:
+            resp = await client.get(search_url, params=params)
+            # Don't raise — Indeed may return 403 but still have content,
+            # or may redirect to a CAPTCHA page
+            if resp.status_code >= 400:
+                self.logger.debug("Indeed returned %d for '%s'", resp.status_code, keyword)
 
-            soup = BeautifulSoup(resp.text, "html.parser")
+        soup = BeautifulSoup(resp.text, "html.parser")
 
-            # Try data-testid selectors first, then fallback classes
+        # Method 1: structured data
+        import json
+        for script in soup.select('script[type="application/ld+json"]'):
+            try:
+                ld = json.loads(script.string or "")
+                items = []
+                if isinstance(ld, list):
+                    items = ld
+                elif isinstance(ld, dict) and ld.get("@type") == "ItemList":
+                    items = ld.get("itemListElement", [])
+                elif isinstance(ld, dict) and ld.get("@type") == "JobPosting":
+                    items = [ld]
+
+                for item in items:
+                    ji = item.get("item", item) if isinstance(item, dict) else item
+                    if not isinstance(ji, dict):
+                        continue
+                    if ji.get("@type") != "JobPosting":
+                        continue
+                    title = ji.get("title", "").strip()
+                    org = ji.get("hiringOrganization", {})
+                    company = org.get("name", "Unknown") if isinstance(org, dict) else "Unknown"
+                    jl = ji.get("jobLocation", [])
+                    if isinstance(jl, list) and jl:
+                        jl = jl[0]
+                    loc = ""
+                    if isinstance(jl, dict):
+                        addr = jl.get("address", {})
+                        if isinstance(addr, dict):
+                            loc = addr.get("addressLocality", addr.get("addressRegion", ""))
+                    url = ji.get("url", "")
+                    ext_id = url.split("jk=")[-1][:16] if "jk=" in url else title[:20]
+                    if title:
+                        jobs.append(JobListing(
+                            portal=self.name, external_id=ext_id,
+                            title=title, company=company, location=loc, url=url,
+                            description=ji.get("description", "")[:500],
+                        ))
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        # Method 2: HTML selectors fallback
+        if not jobs:
             title_links = soup.select('[data-testid="jobTitle"]')
             if not title_links:
                 title_links = soup.select("h2.jobTitle a, a.jcs-JobTitle")
 
-            self.logger.info("Indeed HTTP found %d job titles", len(title_links))
+            self.logger.debug("Indeed HTML found %d titles for '%s'", len(title_links), keyword)
 
-            for el in title_links[:25]:
+            for el in title_links[:15]:
                 try:
                     title = el.get_text(strip=True)
                     url_path = el.get("href", "")
                     url = f"{self.BASE_URL}{url_path}" if url_path.startswith("/") else url_path
-
                     parent = el.find_parent("td") or el.find_parent("div", class_=True)
                     company_el = parent.select_one('[data-testid="company-name"], span.companyName') if parent else None
                     location_el = parent.select_one('[data-testid="text-location"], div.companyLocation') if parent else None
-                    salary_el = parent.select_one('[data-testid="salaryRange"], div.salary-snippet-container') if parent else None
                     company = company_el.get_text(strip=True) if company_el else "Unknown"
                     loc = location_el.get_text(strip=True) if location_el else ""
-                    salary = salary_el.get_text(strip=True) if salary_el else ""
-
                     ext_id = url_path.split("jk=")[-1][:16] if "jk=" in url_path else title[:20]
-
                     jobs.append(JobListing(
-                        portal=self.name,
-                        external_id=ext_id,
-                        title=title,
-                        company=company,
-                        location=loc,
-                        url=url,
-                        salary=salary,
+                        portal=self.name, external_id=ext_id,
+                        title=title, company=company, location=loc, url=url,
                     ))
-                except Exception as e:
-                    self.logger.debug("Error parsing Indeed job: %s", e)
+                except Exception:
+                    continue
 
-        except Exception as e:
-            self.logger.error("Indeed HTTP search error: %s", e)
-
+        self.logger.info("Indeed found %d jobs for '%s'", len(jobs), keyword)
         return jobs
 
     async def apply_to_job(self, job: JobListing, cv_path: str, cover_letter: str = "") -> bool:
@@ -191,7 +252,7 @@ class IndeedPortal(BasePortal):
     async def health_check(self) -> bool:
         try:
             async with httpx.AsyncClient(headers=HEADERS, timeout=15, follow_redirects=True) as client:
-                resp = await client.get(f"{self.BASE_URL}/jobs?q=test&limit=1")
-                return resp.status_code == 200
+                resp = await client.get(f"{self.BASE_URL}/jobs?q=software+engineer&limit=1")
+                return resp.status_code < 400
         except Exception:
             return False

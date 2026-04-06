@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import quote_plus
 
 import httpx
+from bs4 import BeautifulSoup
 
 if TYPE_CHECKING:
     from playwright.async_api import Page
@@ -22,7 +23,11 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
     ),
-    "Accept": "application/json",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
 }
 
 
@@ -30,9 +35,6 @@ class LinkedInPortal(BasePortal):
     name = "linkedin"
     auto_apply_supported = False  # Scrape-only
 
-    # LinkedIn has a public guest job search API
-    GUEST_API = "https://www.linkedin.com/jobs-guest/jobs/api/sideBarJobCount"
-    JOBS_API = "https://www.linkedin.com/jobs-guest/jobs/api/jobPostings/jobs"
     BASE_URL = "https://www.linkedin.com"
 
     def __init__(self, config: AppConfig, creds: Credentials):
@@ -57,70 +59,106 @@ class LinkedInPortal(BasePortal):
         return True
 
     async def search_jobs(self) -> list[JobListing]:
-        """Search using LinkedIn's public guest jobs HTML endpoint — no login needed."""
+        """Search LinkedIn per keyword via public guest page — no login needed."""
+        all_jobs: list[JobListing] = []
+        seen_ids: set[str] = set()
+
+        keywords = self.config.search.keywords[:5]
+        if not keywords:
+            keywords = ["jobs"]
+
+        for keyword in keywords:
+            try:
+                jobs = await self._search_keyword(keyword)
+                for job in jobs:
+                    if job.external_id not in seen_ids:
+                        seen_ids.add(job.external_id)
+                        all_jobs.append(job)
+            except Exception as e:
+                self.logger.warning("LinkedIn search failed for '%s': %s", keyword, e)
+
+        self.logger.info("LinkedIn total: %d unique jobs from %d keywords", len(all_jobs), len(keywords))
+        return all_jobs
+
+    async def _search_keyword(self, keyword: str) -> list[JobListing]:
+        """Search for a single keyword via LinkedIn guest page."""
         jobs: list[JobListing] = []
-        keywords = " ".join(self.config.search.keywords)
         location = self.config.search.locations[0] if self.config.search.locations else ""
 
-        # LinkedIn guest job search page (returns HTML with job cards)
-        search_url = "https://www.linkedin.com/jobs/search/"
         params = {
-            "keywords": keywords,
+            "keywords": keyword,
             "location": location,
             "trk": "public_jobs_jobs-search-bar_search-submit",
             "position": 1,
             "pageNum": 0,
         }
 
-        try:
-            from bs4 import BeautifulSoup
+        async with httpx.AsyncClient(headers=HEADERS, timeout=30, follow_redirects=True) as client:
+            resp = await client.get(f"{self.BASE_URL}/jobs/search/", params=params)
+            if resp.status_code >= 400:
+                self.logger.debug("LinkedIn returned %d for '%s'", resp.status_code, keyword)
+                return jobs
 
-            async with httpx.AsyncClient(
-                headers={**HEADERS, "Accept": "text/html,*/*"},
-                timeout=30,
-                follow_redirects=True,
-            ) as client:
-                resp = await client.get(search_url, params=params)
-                resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
 
-            soup = BeautifulSoup(resp.text, "html.parser")
+        # LinkedIn guest pages use base-card or job-search-card
+        cards = soup.select("div.base-card, li.result-card, div.job-search-card")
+        self.logger.debug("LinkedIn found %d cards for '%s'", len(cards), keyword)
 
-            # LinkedIn guest pages use these selectors
-            cards = soup.select("div.base-card, li.result-card, div.job-search-card")
-            self.logger.info("LinkedIn HTTP found %d job cards", len(cards))
+        for card in cards[:15]:
+            try:
+                title_el = card.select_one("h3.base-search-card__title, h3.result-card__title")
+                company_el = card.select_one("h4.base-search-card__subtitle, h4.result-card__subtitle")
+                location_el = card.select_one("span.job-search-card__location")
+                link_el = card.select_one("a.base-card__full-link, a.result-card__full-card-link")
 
-            for card in cards[:25]:
+                if not title_el:
+                    continue
+
+                title = title_el.get_text(strip=True)
+                company = company_el.get_text(strip=True) if company_el else "Unknown"
+                loc = location_el.get_text(strip=True) if location_el else ""
+                url = (link_el.get("href", "") if link_el else "").split("?")[0]
+                ext_id = url.rstrip("/").split("-")[-1] if url else title[:20]
+
+                jobs.append(JobListing(
+                    portal=self.name,
+                    external_id=ext_id,
+                    title=title,
+                    company=company,
+                    location=loc,
+                    url=url,
+                ))
+            except Exception as e:
+                self.logger.debug("Error parsing LinkedIn card: %s", e)
+
+        # Fallback: try structured data
+        if not jobs:
+            import json
+            for script in soup.select('script[type="application/ld+json"]'):
                 try:
-                    title_el = card.select_one("h3.base-search-card__title, h3.result-card__title")
-                    company_el = card.select_one("h4.base-search-card__subtitle, h4.result-card__subtitle")
-                    location_el = card.select_one("span.job-search-card__location")
-                    link_el = card.select_one("a.base-card__full-link, a.result-card__full-card-link")
+                    ld = json.loads(script.string or "")
+                    items = []
+                    if isinstance(ld, dict) and ld.get("@type") == "ItemList":
+                        items = ld.get("itemListElement", [])
+                    for item in items:
+                        ji = item.get("item", item) if isinstance(item, dict) else item
+                        if not isinstance(ji, dict):
+                            continue
+                        title = ji.get("title", ji.get("name", "")).strip()
+                        org = ji.get("hiringOrganization", {})
+                        company = org.get("name", "Unknown") if isinstance(org, dict) else "Unknown"
+                        url = ji.get("url", "")
+                        ext_id = url.rstrip("/").split("-")[-1] if url else title[:20]
+                        if title:
+                            jobs.append(JobListing(
+                                portal=self.name, external_id=ext_id,
+                                title=title, company=company, url=url,
+                            ))
+                except (json.JSONDecodeError, TypeError):
+                    continue
 
-                    if not title_el:
-                        continue
-
-                    title = title_el.get_text(strip=True)
-                    company = company_el.get_text(strip=True) if company_el else "Unknown"
-                    loc = location_el.get_text(strip=True) if location_el else ""
-                    url = (link_el.get("href", "") if link_el else "").split("?")[0]
-
-                    # Extract job ID from URL
-                    ext_id = url.rstrip("/").split("-")[-1] if url else title[:20]
-
-                    jobs.append(JobListing(
-                        portal=self.name,
-                        external_id=ext_id,
-                        title=title,
-                        company=company,
-                        location=loc,
-                        url=url,
-                    ))
-                except Exception as e:
-                    self.logger.debug("Error parsing LinkedIn card: %s", e)
-
-        except Exception as e:
-            self.logger.error("LinkedIn HTTP search error: %s", e)
-
+        self.logger.info("LinkedIn found %d jobs for '%s'", len(jobs), keyword)
         return jobs
 
     async def apply_to_job(self, job: JobListing, cv_path: str, cover_letter: str = "") -> bool:
@@ -134,7 +172,7 @@ class LinkedInPortal(BasePortal):
     async def health_check(self) -> bool:
         try:
             async with httpx.AsyncClient(headers=HEADERS, timeout=15, follow_redirects=True) as client:
-                resp = await client.get("https://www.linkedin.com/jobs/search/?keywords=test")
-                return resp.status_code == 200
+                resp = await client.get(f"{self.BASE_URL}/jobs/search/?keywords=software+engineer")
+                return resp.status_code < 400
         except Exception:
             return False
