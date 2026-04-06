@@ -34,8 +34,16 @@ class _LazyPortalDict(dict):
             raise KeyError(key)
         return get_portal_class(key)
 
+    def get(self, key, default=None):
+        if key in _PORTAL_REGISTRY:
+            return get_portal_class(key)
+        return default
+
     def __contains__(self, key):
         return key in _PORTAL_REGISTRY
+
+    def __len__(self):
+        return len(_PORTAL_REGISTRY)
 
     def __iter__(self):
         return iter(_PORTAL_REGISTRY)
