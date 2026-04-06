@@ -66,11 +66,16 @@ async def process_portal(
     max_apply = limit or config.apply.max_per_portal
 
     try:
-        # Login
-        logged_in = await portal.login()
-        if not logged_in:
-            logger.error("Failed to login to %s", portal_name)
-            return stats
+        # Login — skip in dry-run / scrape-only; treat failure as non-fatal
+        if dry_run or scrape_only:
+            logger.info("[%s] Skipping login (%s mode)", portal_name,
+                        "dry-run" if dry_run else "scrape-only")
+        else:
+            logged_in = await portal.login()
+            if not logged_in:
+                logger.warning(
+                    "Login failed for %s — continuing to search (some results "
+                    "may still be available without authentication)", portal_name)
 
         # Search
         jobs = await portal.search_jobs()
