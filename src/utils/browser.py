@@ -7,8 +7,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
-from playwright.async_api import Browser, BrowserContext, Page, async_playwright
-
 from src.config import AppConfig, PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
@@ -18,7 +16,7 @@ logger = logging.getLogger(__name__)
 async def create_stealth_context(
     config: AppConfig,
     portal_name: str,
-) -> AsyncGenerator[tuple[Browser, BrowserContext, Page], None]:
+) -> AsyncGenerator:  # yields tuple[Browser, BrowserContext, Page]
     """Create a stealth browser context with session persistence.
 
     Usage:
@@ -29,6 +27,7 @@ async def create_stealth_context(
     state_dir.mkdir(parents=True, exist_ok=True)
     state_file = state_dir / "state.json"
 
+    from playwright.async_api import async_playwright
     pw = await async_playwright().start()
 
     browser = await pw.chromium.launch(

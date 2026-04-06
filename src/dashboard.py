@@ -623,6 +623,228 @@ def render_run_page() -> None:
             st.rerun()
 
 
+# ─── Page: LinkedIn Optimizer ───
+
+LINKEDIN_OPTIMIZER_PROMPT = """You are a senior LinkedIn strategist and recruiter with 10+ years \
+optimizing profiles for top-tier hiring and creator growth.
+
+Here is the scraped LinkedIn profile:
+<profile>
+{profile_content}
+</profile>
+
+The user's goal is: {user_goal}
+(If blank, assume: "attract senior-level opportunities in their domain")
+
+Ignore any LinkedIn UI boilerplate, ads, or "People Also Viewed" content.
+
+Analyze the profile and provide specific rewrites — not suggestions — across all 7 dimensions:
+
+1. **Headline** — Is it keyword-rich, role-specific, value-forward? Rewrite it.
+2. **About/Summary** — Hook in line 1? Compelling arc? Rewrite it.
+3. **Experience Bullets** — Find the 3 weakest (no metric/passive/task-only). \
+Rewrite each as: [Verb] + [Action] + [Measurable Result].
+4. **Featured Section** — What 2-3 items should be pinned for the user's goal?
+5. **Skills & Keywords** — What's missing for SEO + recruiter discoverability?
+6. **Creator/Posting Signals** — Gaps in niche authority or content presence?
+7. **CTA** — Does the profile have a clear next step? Rewrite if missing.
+
+Return output as JSON only — no markdown, no preamble:
+{{
+  "headline": {{ "score": 0, "issues": [], "rewrite": "" }},
+  "about": {{ "score": 0, "issues": [], "rewrite": "" }},
+  "experience_bullets": {{ "weak_bullets": [], "rewrites": [] }},
+  "featured": {{ "recommendations": [] }},
+  "skills": {{ "missing": [], "suggested_additions": [] }},
+  "creator_signals": {{ "gaps": [], "quick_wins": [] }},
+  "cta": {{ "present": false, "rewrite": "" }},
+  "top_3_priority_fixes": []
+}}"""
+
+
+def render_linkedin_optimizer() -> None:
+    """LinkedIn Profile Optimizer — paste your profile and get AI rewrites."""
+    st.header("LinkedIn Profile Optimizer")
+    st.caption("Paste your LinkedIn profile content and get AI-powered rewrites to boost visibility.")
+
+    # Check for API key
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key and ENV_PATH.exists():
+        for line in ENV_PATH.read_text().splitlines():
+            if line.startswith("ANTHROPIC_API_KEY="):
+                api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+
+    if not api_key:
+        st.warning("Set your ANTHROPIC_API_KEY in Settings > Credentials to use this feature.")
+        return
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        user_goal = st.text_input(
+            "Your goal",
+            placeholder="e.g., Land a senior backend engineer role at a FAANG company",
+            key="li_goal",
+        )
+    with col2:
+        st.write("")  # spacing
+        st.write("")
+        analyze_btn = st.button("Analyze Profile", type="primary", key="li_analyze")
+
+    profile_content = st.text_area(
+        "Paste your LinkedIn profile content",
+        height=300,
+        placeholder=(
+            "Copy everything from your LinkedIn profile page:\n"
+            "- Headline\n"
+            "- About section\n"
+            "- Experience (all roles + bullets)\n"
+            "- Skills\n"
+            "- Featured items\n\n"
+            "Tip: Go to your LinkedIn profile, select all (Ctrl+A), copy (Ctrl+C), paste here."
+        ),
+        key="li_profile",
+    )
+
+    if analyze_btn:
+        if not profile_content.strip():
+            st.error("Please paste your LinkedIn profile content first.")
+            return
+
+        with st.spinner("Analyzing your profile with Claude AI..."):
+            try:
+                import anthropic
+
+                client = anthropic.Anthropic(api_key=api_key)
+                prompt = LINKEDIN_OPTIMIZER_PROMPT.format(
+                    profile_content=profile_content,
+                    user_goal=user_goal or "attract senior-level opportunities in their domain",
+                )
+
+                response = client.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=4096,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+
+                result_text = response.content[0].text
+                st.session_state.li_result = result_text
+
+            except Exception as e:
+                st.error(f"Analysis failed: {e}")
+                return
+
+    # Display results
+    if "li_result" in st.session_state and st.session_state.li_result:
+        result_text = st.session_state.li_result
+
+        # Try to parse as JSON for structured display
+        import json
+        try:
+            data = json.loads(result_text)
+            _render_optimizer_results(data)
+        except json.JSONDecodeError:
+            # If not valid JSON, show raw output
+            st.subheader("Analysis Results")
+            st.markdown(result_text)
+
+
+def _render_optimizer_results(data: dict) -> None:
+    """Render structured LinkedIn optimizer results."""
+
+    # Top priorities
+    if data.get("top_3_priority_fixes"):
+        st.subheader("Top 3 Priority Fixes")
+        for i, fix in enumerate(data["top_3_priority_fixes"], 1):
+            st.markdown(f"**{i}.** {fix}")
+        st.divider()
+
+    # Headline
+    if "headline" in data:
+        h = data["headline"]
+        col1, col2 = st.columns([1, 5])
+        col1.metric("Headline", f"{h.get('score', '?')}/10")
+        with col2:
+            st.subheader("Headline")
+            if h.get("issues"):
+                for issue in h["issues"]:
+                    st.markdown(f"- {issue}")
+            if h.get("rewrite"):
+                st.success(f"**Rewrite:** {h['rewrite']}")
+
+    # About
+    if "about" in data:
+        a = data["about"]
+        col1, col2 = st.columns([1, 5])
+        col1.metric("About", f"{a.get('score', '?')}/10")
+        with col2:
+            st.subheader("About / Summary")
+            if a.get("issues"):
+                for issue in a["issues"]:
+                    st.markdown(f"- {issue}")
+            if a.get("rewrite"):
+                st.info(f"**Rewrite:**\n\n{a['rewrite']}")
+
+    # Experience
+    if "experience_bullets" in data:
+        exp = data["experience_bullets"]
+        st.subheader("Experience Bullets")
+        weak = exp.get("weak_bullets", [])
+        rewrites = exp.get("rewrites", [])
+        for i, (old, new) in enumerate(zip(weak, rewrites)):
+            st.markdown(f"**Weak:** {old}")
+            st.success(f"**Rewrite:** {new}")
+            if i < len(weak) - 1:
+                st.write("")
+
+    # Featured
+    if "featured" in data and data["featured"].get("recommendations"):
+        st.subheader("Featured Section")
+        for rec in data["featured"]["recommendations"]:
+            st.markdown(f"- {rec}")
+
+    # Skills
+    if "skills" in data:
+        sk = data["skills"]
+        st.subheader("Skills & Keywords")
+        col1, col2 = st.columns(2)
+        with col1:
+            if sk.get("missing"):
+                st.markdown("**Missing keywords:**")
+                for m in sk["missing"]:
+                    st.markdown(f"- {m}")
+        with col2:
+            if sk.get("suggested_additions"):
+                st.markdown("**Add these:**")
+                for s in sk["suggested_additions"]:
+                    st.markdown(f"- {s}")
+
+    # Creator signals
+    if "creator_signals" in data:
+        cs = data["creator_signals"]
+        st.subheader("Creator / Posting Signals")
+        col1, col2 = st.columns(2)
+        with col1:
+            if cs.get("gaps"):
+                st.markdown("**Gaps:**")
+                for g in cs["gaps"]:
+                    st.markdown(f"- {g}")
+        with col2:
+            if cs.get("quick_wins"):
+                st.markdown("**Quick wins:**")
+                for q in cs["quick_wins"]:
+                    st.markdown(f"- {q}")
+
+    # CTA
+    if "cta" in data:
+        cta = data["cta"]
+        st.subheader("Call to Action")
+        present = cta.get("present", False)
+        st.markdown(f"**CTA present:** {'Yes' if present else 'No'}")
+        if cta.get("rewrite"):
+            st.success(f"**Rewrite:** {cta['rewrite']}")
+
+
 # ─── Main ───
 
 
@@ -637,6 +859,7 @@ def main() -> None:
         "Applications",
         "Manual Apply Queue",
         "Daily Stats",
+        "LinkedIn Optimizer",
         "Settings",
     ])
 
@@ -650,6 +873,8 @@ def main() -> None:
         render_manual_queue()
     elif page == "Daily Stats":
         render_daily_stats()
+    elif page == "LinkedIn Optimizer":
+        render_linkedin_optimizer()
     elif page == "Settings":
         render_settings()
 
