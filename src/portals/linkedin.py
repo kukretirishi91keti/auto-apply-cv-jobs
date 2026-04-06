@@ -6,21 +6,33 @@ import logging
 from typing import TYPE_CHECKING
 from urllib.parse import quote_plus
 
+import httpx
+
 if TYPE_CHECKING:
     from playwright.async_api import Page
 
 from src.config import AppConfig, Credentials
 from src.portals.base import BasePortal, JobListing
-from src.utils.browser import create_stealth_context
-from src.utils.rate_limiter import medium_pause, short_pause
 
 logger = logging.getLogger(__name__)
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+}
 
 
 class LinkedInPortal(BasePortal):
     name = "linkedin"
     auto_apply_supported = False  # Scrape-only
 
+    # LinkedIn has a public guest job search API
+    GUEST_API = "https://www.linkedin.com/jobs-guest/jobs/api/sideBarJobCount"
+    JOBS_API = "https://www.linkedin.com/jobs-guest/jobs/api/jobPostings/jobs"
     BASE_URL = "https://www.linkedin.com"
 
     def __init__(self, config: AppConfig, creds: Credentials):
@@ -29,6 +41,7 @@ class LinkedInPortal(BasePortal):
         self._ctx_manager = None
 
     async def _ensure_browser(self) -> Page:
+        from src.utils.browser import create_stealth_context
         if self._page is None:
             self._ctx_manager = create_stealth_context(self.config, self.name)
             _, _, self._page = await self._ctx_manager.__aenter__()
@@ -40,69 +53,59 @@ class LinkedInPortal(BasePortal):
             self._page = None
 
     async def login(self) -> bool:
-        page = await self._ensure_browser()
-        email = self.get_credential("email")
-        password = self.get_credential("password")
-
-        if not email or not password:
-            self.logger.error("LinkedIn credentials not configured")
-            return False
-
-        try:
-            await page.goto(f"{self.BASE_URL}/login")
-            await medium_pause()
-            await page.fill('input#username', email)
-            await short_pause()
-            await page.fill('input#password', password)
-            await short_pause()
-            await page.click('button[type="submit"]')
-            await page.wait_for_load_state("networkidle")
-            await medium_pause()
-
-            # Check for CAPTCHA/challenge
-            if "challenge" in page.url or "checkpoint" in page.url:
-                self.logger.warning("LinkedIn security challenge detected — manual intervention needed")
-                return False
-
-            self.logger.info("LinkedIn login attempted")
-            return "feed" in page.url or "mynetwork" in page.url
-        except Exception as e:
-            self.logger.error("LinkedIn login error: %s", e)
-            return False
+        self.logger.info("LinkedIn is scrape-only — login skipped")
+        return True
 
     async def search_jobs(self) -> list[JobListing]:
-        page = await self._ensure_browser()
+        """Search using LinkedIn's public guest jobs HTML endpoint — no login needed."""
         jobs: list[JobListing] = []
         keywords = " ".join(self.config.search.keywords)
         location = self.config.search.locations[0] if self.config.search.locations else ""
 
-        search_url = f"{self.BASE_URL}/jobs/search/?keywords={quote_plus(keywords)}&location={quote_plus(location)}"
+        # LinkedIn guest job search page (returns HTML with job cards)
+        search_url = "https://www.linkedin.com/jobs/search/"
+        params = {
+            "keywords": keywords,
+            "location": location,
+            "trk": "public_jobs_jobs-search-bar_search-submit",
+            "position": 1,
+            "pageNum": 0,
+        }
 
         try:
-            await page.goto(search_url)
-            await page.wait_for_load_state("networkidle")
-            await medium_pause()
+            from bs4 import BeautifulSoup
 
-            job_cards = await page.query_selector_all("div.job-card-container, li.jobs-search-results__list-item")
-            self.logger.info("Found %d job cards on LinkedIn (scrape-only)", len(job_cards))
+            async with httpx.AsyncClient(
+                headers={**HEADERS, "Accept": "text/html,*/*"},
+                timeout=30,
+                follow_redirects=True,
+            ) as client:
+                resp = await client.get(search_url, params=params)
+                resp.raise_for_status()
 
-            for card in job_cards[:20]:
+            soup = BeautifulSoup(resp.text, "html.parser")
+
+            # LinkedIn guest pages use these selectors
+            cards = soup.select("div.base-card, li.result-card, div.job-search-card")
+            self.logger.info("LinkedIn HTTP found %d job cards", len(cards))
+
+            for card in cards[:25]:
                 try:
-                    title_el = await card.query_selector("a.job-card-list__title, strong")
-                    company_el = await card.query_selector("span.job-card-container__primary-description, a.job-card-container__company-name")
-                    location_el = await card.query_selector("li.job-card-container__metadata-item")
+                    title_el = card.select_one("h3.base-search-card__title, h3.result-card__title")
+                    company_el = card.select_one("h4.base-search-card__subtitle, h4.result-card__subtitle")
+                    location_el = card.select_one("span.job-search-card__location")
+                    link_el = card.select_one("a.base-card__full-link, a.result-card__full-card-link")
 
                     if not title_el:
                         continue
 
-                    title = (await title_el.inner_text()).strip()
-                    url_el = await card.query_selector("a[href*='/jobs/view/']")
-                    url = (await url_el.get_attribute("href") or "") if url_el else ""
-                    if url and not url.startswith("http"):
-                        url = f"{self.BASE_URL}{url}"
-                    company = (await company_el.inner_text()).strip() if company_el else "Unknown"
-                    loc = (await location_el.inner_text()).strip() if location_el else ""
-                    ext_id = url.split("/view/")[-1].split("/")[0] if "/view/" in url else title[:20]
+                    title = title_el.get_text(strip=True)
+                    company = company_el.get_text(strip=True) if company_el else "Unknown"
+                    loc = location_el.get_text(strip=True) if location_el else ""
+                    url = (link_el.get("href", "") if link_el else "").split("?")[0]
+
+                    # Extract job ID from URL
+                    ext_id = url.rstrip("/").split("-")[-1] if url else title[:20]
 
                     jobs.append(JobListing(
                         portal=self.name,
@@ -114,8 +117,9 @@ class LinkedInPortal(BasePortal):
                     ))
                 except Exception as e:
                     self.logger.debug("Error parsing LinkedIn card: %s", e)
+
         except Exception as e:
-            self.logger.error("LinkedIn search error: %s", e)
+            self.logger.error("LinkedIn HTTP search error: %s", e)
 
         return jobs
 
@@ -128,11 +132,9 @@ class LinkedInPortal(BasePortal):
         return False
 
     async def health_check(self) -> bool:
-        page = await self._ensure_browser()
         try:
-            await page.goto(f"{self.BASE_URL}/jobs")
-            await page.wait_for_load_state("networkidle")
-            search_box = await page.query_selector('input[aria-label*="Search"]')
-            return search_box is not None
+            async with httpx.AsyncClient(headers=HEADERS, timeout=15, follow_redirects=True) as client:
+                resp = await client.get("https://www.linkedin.com/jobs/search/?keywords=test")
+                return resp.status_code == 200
         except Exception:
             return False

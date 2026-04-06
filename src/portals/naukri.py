@@ -7,15 +7,26 @@ import re
 from typing import TYPE_CHECKING
 from urllib.parse import quote_plus
 
+import httpx
+
 if TYPE_CHECKING:
     from playwright.async_api import Page
 
 from src.config import AppConfig, Credentials
 from src.portals.base import BasePortal, JobListing
-from src.utils.browser import create_stealth_context, take_screenshot
-from src.utils.rate_limiter import human_delay, medium_pause, short_pause
 
 logger = logging.getLogger(__name__)
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+    "appid": "109",
+    "systemid": "Naukri",
+}
 
 
 class NaukriPortal(BasePortal):
@@ -23,6 +34,7 @@ class NaukriPortal(BasePortal):
     auto_apply_supported = True
 
     BASE_URL = "https://www.naukri.com"
+    API_URL = "https://www.naukri.com/jobapi/v3/search"
     LOGIN_URL = "https://www.naukri.com/nlogin/login"
 
     def __init__(self, config: AppConfig, creds: Credentials):
@@ -33,6 +45,7 @@ class NaukriPortal(BasePortal):
         self._ctx_manager = None
 
     async def _ensure_browser(self) -> Page:
+        from src.utils.browser import create_stealth_context
         if self._page is None:
             self._ctx_manager = create_stealth_context(self.config, self.name)
             self._browser, self._context, self._page = await self._ctx_manager.__aenter__()
@@ -44,6 +57,7 @@ class NaukriPortal(BasePortal):
             self._page = None
 
     async def login(self) -> bool:
+        from src.utils.rate_limiter import medium_pause, short_pause
         page = await self._ensure_browser()
         email = self.get_credential("email")
         password = self.get_credential("password")
@@ -64,7 +78,6 @@ class NaukriPortal(BasePortal):
             await page.wait_for_load_state("networkidle")
             await medium_pause()
 
-            # Check for successful login
             if "nlogin" not in page.url:
                 self.logger.info("Naukri login successful")
                 return True
@@ -76,63 +89,65 @@ class NaukriPortal(BasePortal):
             return False
 
     async def search_jobs(self) -> list[JobListing]:
-        page = await self._ensure_browser()
+        """Search using Naukri's public JSON API — no browser needed."""
         jobs: list[JobListing] = []
         keywords = " ".join(self.config.search.keywords)
         location = self.config.search.locations[0] if self.config.search.locations else ""
 
-        search_url = f"{self.BASE_URL}/{quote_plus(keywords)}-jobs-in-{quote_plus(location)}"
+        params = {
+            "noOfResults": 30,
+            "urlType": "search_by_keyword",
+            "searchType": "adv",
+            "keyword": keywords,
+            "location": location,
+            "pageNo": 1,
+        }
         if self.config.search.experience_years:
-            search_url += f"?experience={self.config.search.experience_years}"
+            params["experience"] = self.config.search.experience_years
 
         try:
-            await page.goto(search_url)
-            await page.wait_for_load_state("networkidle")
-            await medium_pause()
+            async with httpx.AsyncClient(headers=HEADERS, timeout=30) as client:
+                resp = await client.get(self.API_URL, params=params)
+                resp.raise_for_status()
+                data = resp.json()
 
-            # Parse job cards
-            job_cards = await page.query_selector_all("article.jobTuple, div.srp-jobtuple-wrapper, div.cust-job-tuple")
-            self.logger.info("Found %d job cards on Naukri", len(job_cards))
+            job_details = data.get("jobDetails", [])
+            self.logger.info("Naukri API returned %d jobs", len(job_details))
 
-            for card in job_cards[:30]:  # limit per page
+            for item in job_details:
                 try:
-                    title_el = await card.query_selector("a.title, a.jobTitle")
-                    company_el = await card.query_selector("a.subTitle, a.comp-name")
-                    location_el = await card.query_selector("span.locWdth, span.loc-wrap, li.location")
-                    salary_el = await card.query_selector("span.salary, li.salary")
+                    title = item.get("title", "").strip()
+                    company = item.get("companyName", "Unknown").strip()
+                    loc = item.get("placeholders", [{}])[0].get("label", "") if item.get("placeholders") else ""
+                    salary = item.get("placeholders", [{}])[1].get("label", "") if len(item.get("placeholders", [])) > 1 else ""
+                    jd_url = item.get("jdURL", "")
+                    url = f"{self.BASE_URL}{jd_url}" if jd_url.startswith("/") else jd_url
+                    ext_id = item.get("jobId", "") or str(hash(title + company))[:12]
 
-                    if not title_el:
+                    if not title:
                         continue
-
-                    title = (await title_el.inner_text()).strip()
-                    url = await title_el.get_attribute("href") or ""
-                    company = (await company_el.inner_text()).strip() if company_el else "Unknown"
-                    loc = (await location_el.inner_text()).strip() if location_el else ""
-                    salary = (await salary_el.inner_text()).strip() if salary_el else ""
-
-                    # Extract external ID from URL
-                    ext_id_match = re.search(r"-(\d+)\?", url)
-                    ext_id = ext_id_match.group(1) if ext_id_match else url[-20:]
 
                     jobs.append(JobListing(
                         portal=self.name,
-                        external_id=ext_id,
+                        external_id=str(ext_id),
                         title=title,
                         company=company,
                         location=loc,
                         url=url,
                         salary=salary,
+                        description=item.get("jobDescription", ""),
                     ))
                 except Exception as e:
-                    self.logger.debug("Error parsing job card: %s", e)
-                    continue
+                    self.logger.debug("Error parsing Naukri API job: %s", e)
 
         except Exception as e:
-            self.logger.error("Naukri search error: %s", e)
+            self.logger.error("Naukri API search error: %s", e)
 
         return jobs
 
     async def apply_to_job(self, job: JobListing, cv_path: str, cover_letter: str = "") -> bool:
+        from src.utils.browser import take_screenshot
+        from src.utils.rate_limiter import human_delay, medium_pause, short_pause
         page = await self._ensure_browser()
 
         try:
@@ -140,12 +155,10 @@ class NaukriPortal(BasePortal):
             await page.wait_for_load_state("networkidle")
             await medium_pause()
 
-            # Get full description
             desc_el = await page.query_selector("div.job-desc, section.job-desc")
             if desc_el:
                 job.description = (await desc_el.inner_text()).strip()
 
-            # Look for apply button
             apply_btn = await page.query_selector(
                 'button:has-text("Apply"), a:has-text("Apply on company site"), '
                 'button:has-text("Apply Now"), button.apply-button'
@@ -157,13 +170,11 @@ class NaukriPortal(BasePortal):
             await apply_btn.click()
             await human_delay(2, 4)
 
-            # Handle chatbot/questionnaire if present
             chatbot = await page.query_selector("div.chatbot_container")
             if chatbot:
                 self.logger.info("Chatbot detected, attempting to fill...")
                 await self._handle_chatbot(page)
 
-            # Check for success indicators
             success = await page.query_selector(
                 'div:has-text("applied successfully"), '
                 'div:has-text("Application Submitted")'
@@ -178,17 +189,15 @@ class NaukriPortal(BasePortal):
             self.logger.warning("Uncertain if application succeeded for: %s", job.title)
             if self.config.apply.save_screenshots:
                 await take_screenshot(page, self.name, f"{job.external_id}_uncertain")
-            return True  # Assume success if no error
-
+            return True
         except Exception as e:
             self.logger.error("Apply error for %s: %s", job.title, e)
             return False
 
     async def _handle_chatbot(self, page: Page) -> None:
-        """Try to handle Naukri's chatbot questionnaire."""
-        for _ in range(5):  # max 5 questions
+        from src.utils.rate_limiter import human_delay, short_pause
+        for _ in range(5):
             await human_delay(1, 2)
-            # Try to find and click common options
             options = await page.query_selector_all("div.chatbot_container button, div.chatbot_container input")
             if not options:
                 break
@@ -200,13 +209,11 @@ class NaukriPortal(BasePortal):
                     continue
 
     async def health_check(self) -> bool:
-        page = await self._ensure_browser()
+        """Quick check via HTTP — no browser needed."""
         try:
-            await page.goto(self.BASE_URL)
-            await page.wait_for_load_state("networkidle")
-            # Check if key selectors exist
-            search_box = await page.query_selector('input[placeholder*="skill"], input.suggestor-input')
-            return search_box is not None
+            async with httpx.AsyncClient(headers=HEADERS, timeout=15) as client:
+                resp = await client.get(self.API_URL, params={"noOfResults": 1, "keyword": "test"})
+                return resp.status_code == 200
         except Exception as e:
             self.logger.error("Naukri health check failed: %s", e)
             return False

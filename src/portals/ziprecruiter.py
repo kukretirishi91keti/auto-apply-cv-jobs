@@ -6,15 +6,26 @@ import logging
 from typing import TYPE_CHECKING
 from urllib.parse import quote_plus
 
+import httpx
+from bs4 import BeautifulSoup
+
 if TYPE_CHECKING:
     from playwright.async_api import Page
 
 from src.config import AppConfig, Credentials
 from src.portals.base import BasePortal, JobListing
-from src.utils.browser import create_stealth_context, take_screenshot
-from src.utils.rate_limiter import medium_pause, short_pause
 
 logger = logging.getLogger(__name__)
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
 
 class ZipRecruiterPortal(BasePortal):
@@ -29,6 +40,7 @@ class ZipRecruiterPortal(BasePortal):
         self._ctx_manager = None
 
     async def _ensure_browser(self) -> Page:
+        from src.utils.browser import create_stealth_context
         if self._page is None:
             self._ctx_manager = create_stealth_context(self.config, self.name)
             _, _, self._page = await self._ctx_manager.__aenter__()
@@ -40,6 +52,7 @@ class ZipRecruiterPortal(BasePortal):
             self._page = None
 
     async def login(self) -> bool:
+        from src.utils.rate_limiter import medium_pause, short_pause
         page = await self._ensure_browser()
         email = self.get_credential("email")
         password = self.get_credential("password")
@@ -66,36 +79,42 @@ class ZipRecruiterPortal(BasePortal):
             return False
 
     async def search_jobs(self) -> list[JobListing]:
-        page = await self._ensure_browser()
+        """Search using HTTP + BeautifulSoup — no browser needed."""
         jobs: list[JobListing] = []
         keywords = " ".join(self.config.search.keywords)
         location = self.config.search.locations[0] if self.config.search.locations else ""
 
-        search_url = f"{self.BASE_URL}/jobs-search?search={quote_plus(keywords)}&location={quote_plus(location)}"
+        search_url = f"{self.BASE_URL}/jobs-search"
+        params = {
+            "search": keywords,
+            "location": location,
+        }
 
         try:
-            await page.goto(search_url)
-            await page.wait_for_load_state("networkidle")
-            await medium_pause()
+            async with httpx.AsyncClient(headers=HEADERS, timeout=30, follow_redirects=True) as client:
+                resp = await client.get(search_url, params=params)
+                resp.raise_for_status()
 
-            job_cards = await page.query_selector_all("article.job-listing, div.job_result")
-            self.logger.info("Found %d job cards on ZipRecruiter", len(job_cards))
+            soup = BeautifulSoup(resp.text, "html.parser")
 
-            for card in job_cards[:25]:
+            cards = soup.select("article.job-listing, div.job_result, div.job_content")
+            self.logger.info("ZipRecruiter HTTP found %d job cards", len(cards))
+
+            for card in cards[:25]:
                 try:
-                    title_el = await card.query_selector("h2 a, a.job_link")
-                    company_el = await card.query_selector("a.company_name, span.company_name")
-                    location_el = await card.query_selector("span.location, a.location")
-                    salary_el = await card.query_selector("span.salary, span.pay")
+                    title_el = card.select_one("h2 a, a.job_link, a.job-title")
+                    company_el = card.select_one("a.company_name, span.company_name, p.company_name")
+                    location_el = card.select_one("span.location, a.location, p.location")
+                    salary_el = card.select_one("span.salary, span.pay, p.salary")
 
                     if not title_el:
                         continue
 
-                    title = (await title_el.inner_text()).strip()
-                    url = await title_el.get_attribute("href") or ""
-                    company = (await company_el.inner_text()).strip() if company_el else "Unknown"
-                    loc = (await location_el.inner_text()).strip() if location_el else ""
-                    salary = (await salary_el.inner_text()).strip() if salary_el else ""
+                    title = title_el.get_text(strip=True)
+                    url = title_el.get("href", "")
+                    company = company_el.get_text(strip=True) if company_el else "Unknown"
+                    loc = location_el.get_text(strip=True) if location_el else ""
+                    salary = salary_el.get_text(strip=True) if salary_el else ""
                     ext_id = url.split("/")[-1][:20] if url else title[:20]
 
                     jobs.append(JobListing(
@@ -110,11 +129,13 @@ class ZipRecruiterPortal(BasePortal):
                 except Exception as e:
                     self.logger.debug("Error parsing ZipRecruiter card: %s", e)
         except Exception as e:
-            self.logger.error("ZipRecruiter search error: %s", e)
+            self.logger.error("ZipRecruiter HTTP search error: %s", e)
 
         return jobs
 
     async def apply_to_job(self, job: JobListing, cv_path: str, cover_letter: str = "") -> bool:
+        from src.utils.browser import take_screenshot
+        from src.utils.rate_limiter import medium_pause, short_pause
         page = await self._ensure_browser()
 
         try:
@@ -126,7 +147,6 @@ class ZipRecruiterPortal(BasePortal):
             if desc_el:
                 job.description = (await desc_el.inner_text()).strip()
 
-            # ZipRecruiter has "1-Click Apply"
             apply_btn = await page.query_selector(
                 'button:has-text("Apply"), button:has-text("1-Click Apply"), '
                 'a:has-text("Apply Now")'
@@ -138,7 +158,6 @@ class ZipRecruiterPortal(BasePortal):
             await apply_btn.click()
             await medium_pause()
 
-            # Upload resume if needed
             file_input = await page.query_selector('input[type="file"]')
             if file_input:
                 await file_input.set_input_files(cv_path)
@@ -159,11 +178,9 @@ class ZipRecruiterPortal(BasePortal):
             return False
 
     async def health_check(self) -> bool:
-        page = await self._ensure_browser()
         try:
-            await page.goto(self.BASE_URL)
-            await page.wait_for_load_state("networkidle")
-            search_box = await page.query_selector('input#search-bar-input, input[name="search"]')
-            return search_box is not None
+            async with httpx.AsyncClient(headers=HEADERS, timeout=15, follow_redirects=True) as client:
+                resp = await client.get(f"{self.BASE_URL}/jobs-search?search=test")
+                return resp.status_code == 200
         except Exception:
             return False
