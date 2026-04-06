@@ -1,0 +1,91 @@
+# Auto-Apply CV Jobs Configuration
+
+# Job search preferences
+search:
+  keywords:
+    - "software engineer"
+    - "backend developer"
+    - "full stack developer"
+    - "python developer"
+  locations:
+    - "Bangalore"
+    - "Mumbai"
+    - "Remote"
+  experience_years: 5
+  min_salary: 0          # 0 = no minimum
+  excluded_companies:
+    - "example-spam-company"
+
+# CV configuration
+cvs:
+  # Path relative to project root
+  directory: "data/cvs"
+  versions:
+    - name: "backend_focused"
+      file: "cv_backend.pdf"
+      description: "Emphasizes backend, APIs, databases, microservices"
+    - name: "fullstack_focused"
+      file: "cv_fullstack.pdf"
+      description: "Emphasizes full-stack, React/Vue, Node.js, cloud"
+    - name: "data_focused"
+      file: "cv_data.pdf"
+      description: "Emphasizes data engineering, ML pipelines, analytics"
+
+# Matching configuration
+matching:
+  # Stage 1: keyword filter (free, fast)
+  keyword_min_score: 0.3       # 0-1, minimum keyword overlap to pass to stage 2
+  # Stage 2: Claude AI scoring (paid, smart)
+  ai_min_score: 0.6            # 0-1, minimum AI score to auto-apply
+  ai_model: "claude-sonnet-4-20250514"
+  max_ai_scorings_per_day: 100
+  api_budget_usd: 2.00         # hard-stop daily Claude API spend
+
+# Application settings
+apply:
+  max_applications_per_day: 30
+  max_per_portal: 10
+  generate_cover_letter: true
+  save_screenshots: true       # screenshot after each apply for verification
+
+# Portal settings
+portals:
+  naukri:
+    enabled: true
+    auto_apply: true
+  indeed:
+    enabled: true
+    auto_apply: true
+  foundit:
+    enabled: true
+    auto_apply: true
+  ziprecruiter:
+    enabled: true
+    auto_apply: true
+  linkedin:
+    enabled: true
+    auto_apply: false          # scrape-only (aggressive bot detection)
+  glassdoor:
+    enabled: true
+    auto_apply: false          # scrape-only
+
+# Scheduling
+schedule:
+  enabled: false
+  cron_hour: 9
+  cron_minute: 0
+  timezone: "Asia/Kolkata"
+
+# Browser settings
+browser:
+  headless: true
+  slow_mo: 100                 # ms between actions
+  timeout: 30000               # ms page load timeout
+  state_dir: "browser_state"   # persistent session storage
+
+# Notifications
+notifications:
+  email:
+    enabled: false
+  slack:
+    enabled: false

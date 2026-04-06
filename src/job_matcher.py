@@ -1,0 +1,129 @@
+"""Two-stage job matching: keyword filter + Claude AI scoring."""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass
+
+import anthropic
+
+from src.config import AppConfig, Credentials
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MatchResult:
+    keyword_score: float
+    ai_score: float | None = None
+    recommended_cv: str | None = None
+    reasoning: str = ""
+    should_apply: bool = False
+
+
+def keyword_score(job_title: str, job_description: str, keywords: list[str]) -> float:
+    """Stage 1: Fast keyword matching (free).
+
+    Returns 0.0–1.0 based on proportion of search keywords found.
+    """
+    if not keywords:
+        return 1.0  # no keywords configured = pass everything
+
+    text = f"{job_title} {job_description}".lower()
+    matches = sum(1 for kw in keywords if kw.lower() in text)
+    return matches / len(keywords)
+
+
+def ai_score_job(
+    job_title: str,
+    job_description: str,
+    cv_texts: dict[str, str],
+    config: AppConfig,
+    creds: Credentials,
+) -> tuple[float, str, str]:
+    """Stage 2: Claude AI scoring (paid).
+
+    Returns (score, recommended_cv, reasoning).
+    """
+    cv_summaries = "\n".join(
+        f"- {name}: {text[:500]}..." for name, text in cv_texts.items()
+    )
+
+    prompt = f"""Rate how well this candidate matches this job on a scale of 0.0 to 1.0.
+Also recommend which CV version to use.
+
+Job Title: {job_title}
+Job Description:
+{job_description[:3000]}
+
+Candidate CVs:
+{cv_summaries}
+
+Respond in exactly this format:
+SCORE: <0.0-1.0>
+CV: <cv_name>
+REASON: <one sentence>"""
+
+    client = anthropic.Anthropic(api_key=creds.anthropic_api_key)
+    response = client.messages.create(
+        model=config.matching.ai_model,
+        max_tokens=200,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    text = response.content[0].text  # type: ignore[union-attr]
+    score = 0.0
+    cv_name = next(iter(cv_texts)) if cv_texts else ""
+    reason = ""
+
+    for line in text.strip().split("\n"):
+        if line.startswith("SCORE:"):
+            try:
+                match = re.search(r"[\d.]+", line.split(":", 1)[1])
+                score = float(match.group()) if match else 0.0
+            except (ValueError, AttributeError):
+                score = 0.0
+        elif line.startswith("CV:"):
+            cv_name = line.split(":", 1)[1].strip()
+        elif line.startswith("REASON:"):
+            reason = line.split(":", 1)[1].strip()
+
+    # Validate CV name
+    if cv_name not in cv_texts and cv_texts:
+        cv_name = next(iter(cv_texts))
+
+    return min(max(score, 0.0), 1.0), cv_name, reason
+
+
+def match_job(
+    job_title: str,
+    job_description: str,
+    cv_texts: dict[str, str],
+    config: AppConfig,
+    creds: Credentials,
+) -> MatchResult:
+    """Run two-stage matching pipeline."""
+    # Stage 1: Keyword filter
+    kw_score = keyword_score(job_title, job_description, config.search.keywords)
+
+    if kw_score < config.matching.keyword_min_score:
+        logger.debug("Job '%s' failed keyword filter (%.2f < %.2f)", job_title, kw_score, config.matching.keyword_min_score)
+        return MatchResult(keyword_score=kw_score, should_apply=False)
+
+    # Stage 2: AI scoring
+    try:
+        score, cv_name, reason = ai_score_job(job_title, job_description, cv_texts, config, creds)
+    except Exception as e:
+        logger.warning("AI scoring failed for '%s': %s", job_title, e)
+        return MatchResult(keyword_score=kw_score, should_apply=False, reasoning=str(e))
+
+    should_apply = score >= config.matching.ai_min_score
+
+    return MatchResult(
+        keyword_score=kw_score,
+        ai_score=score,
+        recommended_cv=cv_name,
+        reasoning=reason,
+        should_apply=should_apply,
+    )

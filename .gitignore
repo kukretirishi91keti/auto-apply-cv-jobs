@@ -1,0 +1,33 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Environment
+.env
+.venv/
+venv/
+env/
+
+# Data
+data/cvs/*.pdf
+data/cvs/*.docx
+data/screenshots/*.png
+*.db
+
+# Browser state
+browser_state/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

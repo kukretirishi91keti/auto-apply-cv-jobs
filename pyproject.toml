@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "auto-apply-cv-jobs"
+version = "0.1.0"
+description = "Automated job application tool — scrapes portals daily, matches CVs using AI, and auto-applies"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=0.39.0",
+    "playwright>=1.40.0",
+    "httpx>=0.25.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "pyyaml>=6.0",
+    "apscheduler>=3.10.0",
+    "beautifulsoup4>=4.12.0",
+    "pypdf>=3.17.0",
+    "python-docx>=1.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+auto-apply = "src.main:cli"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
