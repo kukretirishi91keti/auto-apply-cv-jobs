@@ -101,11 +101,17 @@ def _setup_user_session(user_id: str) -> None:
     ensure_user_config(user_id)
     init_db(paths["db_path"])
 
-    # Load user-specific .env so credentials are available in-process
+    # Load user-specific .env into os.environ so credentials are available
+    # both in-process AND inherited by subprocess
     env_file = paths["env_path"]
     if env_file.exists():
-        from dotenv import load_dotenv
-        load_dotenv(env_file, override=True)
+        for line in env_file.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, val = line.partition("=")
+                key, val = key.strip(), val.strip()
+                if val:
+                    os.environ[key] = val
 
 
 def _setup_default_session() -> None:
@@ -628,11 +634,23 @@ def _load_env() -> dict[str, str]:
 
 
 def _save_env(env: dict[str, str]) -> None:
-    """Save .env file."""
+    """Save .env file to user-specific location AND project root for subprocess."""
     lines = []
     for key, val in env.items():
         lines.append(f"{key}={val}")
-    _env_path().write_text("\n".join(lines) + "\n")
+    content = "\n".join(lines) + "\n"
+
+    # Save to user-specific path
+    _env_path().write_text(content)
+
+    # Also save to project root .env so subprocess always finds it
+    root_env = PROJECT_ROOT / ".env"
+    root_env.write_text(content)
+
+    # Also set in os.environ for current process + subprocess inheritance
+    for key, val in env.items():
+        if val:
+            os.environ[key] = val
 
 
 def render_settings() -> None:
