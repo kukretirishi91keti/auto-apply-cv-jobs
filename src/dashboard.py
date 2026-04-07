@@ -101,6 +101,12 @@ def _setup_user_session(user_id: str) -> None:
     ensure_user_config(user_id)
     init_db(paths["db_path"])
 
+    # Load user-specific .env so credentials are available in-process
+    env_file = paths["env_path"]
+    if env_file.exists():
+        from dotenv import load_dotenv
+        load_dotenv(env_file, override=True)
+
 
 def _setup_default_session() -> None:
     """Configure session for single-user mode (default paths)."""

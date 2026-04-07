@@ -307,6 +307,15 @@ def run_once(
     db_path_env = os.environ.get("AUTO_APPLY_DB_PATH")
     cv_dir_env = os.environ.get("AUTO_APPLY_CV_DIR")
 
+    if env_path:
+        logger.info("Using user-specific env: %s", env_path)
+    if config_path:
+        logger.info("Using user-specific config: %s", config_path)
+    if cv_dir_env:
+        logger.info("Using user-specific CV dir: %s", cv_dir_env)
+    if db_path_env:
+        logger.info("Using user-specific DB: %s", db_path_env)
+
     config = get_config(Path(config_path) if config_path else None)
     creds = get_credentials(Path(env_path) if env_path else None)
 
