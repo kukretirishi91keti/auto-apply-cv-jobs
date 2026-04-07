@@ -265,38 +265,84 @@ def render_manual_queue() -> None:
                             with st.spinner("Generating cover letter..."):
                                 try:
                                     from src.cover_letter import generate_cover_letter
+                                    from src.cv_manager import load_all_cvs
                                     from src.config import get_config, get_credentials
 
                                     cfg = get_config()
                                     crd = get_credentials()
-                                    # Load first available CV text
-                                    cv_text = ""
-                                    for cv_file in CV_DIR.glob("*.*"):
-                                        if cv_file.suffix.lower() == ".pdf":
-                                            try:
-                                                import PyPDF2
-                                                with open(cv_file, "rb") as f:
-                                                    reader = PyPDF2.PdfReader(f)
-                                                    cv_text = " ".join(p.extract_text() or "" for p in reader.pages)
-                                            except ImportError:
-                                                cv_text = f"[CV file: {cv_file.name}]"
-                                        elif cv_file.suffix.lower() in (".docx", ".doc"):
-                                            try:
-                                                import docx
-                                                doc = docx.Document(str(cv_file))
-                                                cv_text = " ".join(p.text for p in doc.paragraphs)
-                                            except ImportError:
-                                                cv_text = f"[CV file: {cv_file.name}]"
-                                        if cv_text:
-                                            break
+                                    cv_texts = load_all_cvs(cfg)
+                                    cv_text = next(iter(cv_texts.values()), "") if cv_texts else ""
 
-                                    letter = generate_cover_letter(
-                                        title, company, description or "", cv_text, cfg, crd,
-                                    )
-                                    st.session_state[cl_key] = letter
-                                    st.rerun()
+                                    if not cv_text:
+                                        st.error("Could not extract text from CV. Check Settings > CV Management.")
+                                    else:
+                                        letter = generate_cover_letter(
+                                            title, company, description or "", cv_text, cfg, crd,
+                                        )
+                                        st.session_state[cl_key] = letter
+                                        st.rerun()
                                 except Exception as e:
                                     st.error(f"Cover letter generation failed: {e}")
+                    # CV Tailor — rewrite CV highlights for this specific job
+                    st.divider()
+                    tailor_key = f"cv_tailor_{job_id}"
+                    if tailor_key in st.session_state:
+                        st.markdown("**Tailored CV Highlights (copy to update your CV):**")
+                        st.text_area(
+                            "Tailored CV content",
+                            value=st.session_state[tailor_key],
+                            height=300,
+                            key=f"tailor_text_{job_id}_{i}",
+                        )
+                    else:
+                        if st.button("Tailor CV for This Job", key=f"tailor_{job_id}_{i}"):
+                            with st.spinner("Tailoring CV for this role..."):
+                                try:
+                                    from src.cv_manager import load_all_cvs
+                                    from src.config import get_config, get_credentials
+                                    import anthropic
+
+                                    cfg = get_config()
+                                    crd = get_credentials()
+                                    cv_texts_loaded = load_all_cvs(cfg)
+                                    cv_text = next(iter(cv_texts_loaded.values()), "")
+
+                                    if not cv_text:
+                                        st.error("Could not extract CV text.")
+                                    else:
+                                        client = anthropic.Anthropic(api_key=crd.anthropic_api_key)
+                                        tailor_prompt = f"""You are a senior career coach. Rewrite the candidate's CV content \
+to be perfectly aligned with this specific job posting.
+
+RULES:
+- Output ONLY the rewritten text — no formatting instructions, no headers like "CV" or "Resume"
+- Keep it concise: max 1 page worth of content
+- Rewrite the Professional Summary (3-4 lines) to directly address this role
+- Rewrite the top 5-6 Experience bullets to highlight relevant achievements using metrics
+- List the most relevant Skills (10-12) for this role first
+- Add a "Why I'm a fit" section (2-3 bullet points mapping experience to job requirements)
+- Keep all facts truthful — only reframe/emphasize, never fabricate
+
+Job Title: {title}
+Company: {company}
+Job Description:
+{(description or 'No description available')[:3000]}
+
+Current CV:
+{cv_text[:4000]}
+
+Write the tailored CV content now:"""
+
+                                        response = client.messages.create(
+                                            model=cfg.matching.ai_model,
+                                            max_tokens=2000,
+                                            messages=[{"role": "user", "content": tailor_prompt}],
+                                        )
+                                        st.session_state[tailor_key] = response.content[0].text.strip()
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"CV tailoring failed: {e}")
+
                 else:
                     missing = []
                     if not api_key:
