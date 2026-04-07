@@ -299,6 +299,47 @@ def get_manual_apply_queue() -> list[sqlite3.Row]:
         ).fetchall()
 
 
+def get_cloud_apply_queue(
+    min_ai_score: float | None = None,
+    portal: str | None = None,
+    limit: int = 100,
+) -> list[sqlite3.Row]:
+    """Get all jobs awaiting application (for Cloud Apply Assistant).
+
+    Includes ALL portals — not just scrape-only. Jobs that haven't been
+    applied to yet, ordered by AI score (best matches first).
+    """
+    with get_connection() as conn:
+        conditions = ["(a.status IS NULL OR a.status IN ('scrape_only', 'pending'))"]
+        params: list[Any] = []
+
+        if min_ai_score is not None:
+            conditions.append("j.ai_score >= ?")
+            params.append(min_ai_score)
+        if portal:
+            conditions.append("j.portal = ?")
+            params.append(portal)
+
+        # Must have a URL to apply
+        conditions.append("j.url IS NOT NULL AND j.url != ''")
+
+        where = " AND ".join(conditions)
+        params.append(limit)
+
+        return conn.execute(
+            f"""SELECT j.id AS job_id, j.title, j.company, j.location, j.portal,
+                       j.url, j.salary, j.description, j.keyword_score, j.ai_score,
+                       j.selected_cv, j.discovered_at,
+                       a.status AS app_status
+                FROM jobs j
+                LEFT JOIN applications a ON j.id = a.job_id
+                WHERE {where}
+                ORDER BY COALESCE(j.ai_score, 0) DESC, j.keyword_score DESC
+                LIMIT ?""",
+            params,
+        ).fetchall()
+
+
 def mark_manually_applied(job_id: int, notes: str = "") -> None:
     """Mark a scrape-only job as manually applied."""
     with get_connection() as conn:

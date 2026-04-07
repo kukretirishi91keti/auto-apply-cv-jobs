@@ -19,12 +19,13 @@ from src.db import (
     get_jobs_feed,
     get_applications,
     get_manual_apply_queue,
+    get_cloud_apply_queue,
     mark_manually_applied,
     get_daily_stats,
     get_portal_summary,
 )
 
-PORTALS = ["All", "naukri", "indeed", "foundit", "ziprecruiter", "linkedin", "glassdoor"]
+PORTALS = ["All", "naukri", "indeed", "foundit", "ziprecruiter", "linkedin", "glassdoor", "remoteok", "weworkremotely", "jsearch", "adzuna"]
 PORTAL_NAMES = ["naukri", "indeed", "foundit", "ziprecruiter", "linkedin", "glassdoor"]
 STATUS_COLORS = {
     "applied": "🟢",
@@ -132,43 +133,177 @@ def render_applications() -> None:
 
 
 def render_manual_queue() -> None:
-    """Manual Apply Queue — LinkedIn/Glassdoor scrape-only jobs."""
-    st.header("Manual Apply Queue")
-    st.caption("Jobs from LinkedIn & Glassdoor that need manual application")
+    """Cloud Apply Assistant — apply to matched jobs without Playwright."""
+    st.header("Cloud Apply Assistant")
+    st.caption(
+        "Apply to jobs directly from your browser — no Playwright needed. "
+        "Click 'Apply Now' to open the job page, use the generated cover letter, and mark as applied."
+    )
 
-    queue = get_manual_apply_queue()
+    # ── Filters ──
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        portal_filter = st.selectbox("Portal", PORTALS, key="caq_portal")
+    with col2:
+        min_score = st.slider("Min AI Score", 0.0, 1.0, 0.0, 0.1, key="caq_score")
+    with col3:
+        view_mode = st.radio("View", ["Best Matches", "All Jobs"], key="caq_view", horizontal=True)
 
-    if not queue:
-        st.info("No scrape-only jobs in queue. Run `auto-apply --scrape-only --portal linkedin` to discover jobs.")
+    portal_val = portal_filter if portal_filter != "All" else None
+    score_val = min_score if min_score > 0 else None
+
+    # Use cloud apply queue (all portals, sorted by score)
+    if view_mode == "Best Matches":
+        queue = get_cloud_apply_queue(min_ai_score=score_val, portal=portal_val)
+    else:
+        queue = get_cloud_apply_queue(portal=portal_val)
+
+    # Also include legacy manual queue
+    legacy_queue = get_manual_apply_queue()
+    legacy_ids = {dict(r).get("job_id") for r in legacy_queue}
+    queue_ids = {dict(r).get("job_id") for r in queue}
+    # Merge legacy items not already in queue
+    all_items = list(queue)
+    for r in legacy_queue:
+        if dict(r).get("job_id") not in queue_ids:
+            all_items.append(r)
+
+    if not all_items:
+        st.info("No jobs in queue. Run a **Dry Run** first to discover and score jobs.")
         return
 
-    st.metric("Jobs to Review", len(queue))
+    # ── Stats ──
+    scored = [dict(r) for r in all_items if dict(r).get("ai_score")]
+    unscored = [dict(r) for r in all_items if not dict(r).get("ai_score")]
+    cols = st.columns(3)
+    cols[0].metric("Total Jobs", len(all_items))
+    cols[1].metric("AI Scored", len(scored))
+    cols[2].metric("Unscored", len(unscored))
 
-    for row in queue:
+    if unscored and not scored:
+        st.warning(
+            "Jobs found but none have AI scores. To score jobs:\n"
+            "1. **Upload your CV** in Settings > CV Management\n"
+            "2. **Set your Anthropic API key** in Settings > Credentials\n"
+            "3. Run a **Dry Run** — jobs will be scored against your CV"
+        )
+
+    # ── Check for cover letter capability ──
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key and ENV_PATH.exists():
+        for line in ENV_PATH.read_text().splitlines():
+            if line.startswith("ANTHROPIC_API_KEY="):
+                api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+    has_cv = any(CV_DIR.glob("*.*")) if CV_DIR.exists() else False
+
+    st.divider()
+
+    # ── Job Cards ──
+    for i, row in enumerate(all_items):
         job = dict(row)
-        with st.container(border=True):
-            left, right = st.columns([4, 1])
-            with left:
-                title = job.get("title", "Unknown")
-                company = job.get("company", "Unknown")
-                url = job.get("url", "")
-                location = job.get("location", "")
-                portal = job.get("portal", "")
-                salary = job.get("salary", "")
+        job_id = job.get("job_id")
+        title = job.get("title", "Unknown")
+        company = job.get("company", "Unknown")
+        url = job.get("url", "")
+        location = job.get("location", "")
+        portal = job.get("portal", "")
+        salary = job.get("salary", "")
+        ai_score = job.get("ai_score")
+        kw_score = job.get("keyword_score")
+        description = job.get("description", "")
 
+        with st.container(border=True):
+            # ── Header row ──
+            header_col, score_col, action_col = st.columns([3, 1, 1])
+
+            with header_col:
                 if url:
                     st.markdown(f"### [{title}]({url})")
                 else:
                     st.markdown(f"### {title}")
-                st.write(f"**{company}** | {location} | {portal.upper()}")
+                portal_badge = portal.upper() if portal else "?"
+                info_parts = [f"**{company}**", location, portal_badge]
                 if salary:
-                    st.write(f"Salary: {salary}")
+                    info_parts.append(f"Salary: {salary}")
+                st.write(" | ".join(filter(None, info_parts)))
 
-            with right:
-                job_id = job.get("job_id")
-                if st.button("Mark Applied", key=f"mark_{job_id}", type="primary"):
+            with score_col:
+                if ai_score is not None:
+                    score_pct = int(ai_score * 100)
+                    color = "green" if score_pct >= 70 else "orange" if score_pct >= 50 else "red"
+                    st.markdown(f"**AI: :{color}[{score_pct}%]**")
+                if kw_score is not None:
+                    st.caption(f"KW: {int(kw_score * 100)}%")
+
+            with action_col:
+                if url:
+                    st.link_button("Apply Now", url, type="primary")
+                if st.button("Mark Applied", key=f"mark_{job_id}_{i}"):
                     mark_manually_applied(job_id)
                     st.rerun()
+
+            # ── Expandable details ──
+            with st.expander("Details & Cover Letter"):
+                if description:
+                    st.markdown("**Job Description:**")
+                    st.text(description[:500] + ("..." if len(description) > 500 else ""))
+
+                # Cover letter generation
+                if api_key and has_cv:
+                    cl_key = f"cover_letter_{job_id}"
+                    if cl_key in st.session_state:
+                        st.markdown("**Generated Cover Letter:**")
+                        st.text_area(
+                            "Copy this cover letter",
+                            value=st.session_state[cl_key],
+                            height=200,
+                            key=f"cl_text_{job_id}_{i}",
+                        )
+                    else:
+                        if st.button("Generate Cover Letter", key=f"gen_cl_{job_id}_{i}"):
+                            with st.spinner("Generating cover letter..."):
+                                try:
+                                    from src.cover_letter import generate_cover_letter
+                                    from src.config import get_config, get_credentials
+
+                                    cfg = get_config()
+                                    crd = get_credentials()
+                                    # Load first available CV text
+                                    cv_text = ""
+                                    for cv_file in CV_DIR.glob("*.*"):
+                                        if cv_file.suffix.lower() == ".pdf":
+                                            try:
+                                                import PyPDF2
+                                                with open(cv_file, "rb") as f:
+                                                    reader = PyPDF2.PdfReader(f)
+                                                    cv_text = " ".join(p.extract_text() or "" for p in reader.pages)
+                                            except ImportError:
+                                                cv_text = f"[CV file: {cv_file.name}]"
+                                        elif cv_file.suffix.lower() in (".docx", ".doc"):
+                                            try:
+                                                import docx
+                                                doc = docx.Document(str(cv_file))
+                                                cv_text = " ".join(p.text for p in doc.paragraphs)
+                                            except ImportError:
+                                                cv_text = f"[CV file: {cv_file.name}]"
+                                        if cv_text:
+                                            break
+
+                                    letter = generate_cover_letter(
+                                        title, company, description or "", cv_text, cfg, crd,
+                                    )
+                                    st.session_state[cl_key] = letter
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Cover letter generation failed: {e}")
+                else:
+                    missing = []
+                    if not api_key:
+                        missing.append("Anthropic API key")
+                    if not has_cv:
+                        missing.append("CV upload")
+                    st.caption(f"Set up {' and '.join(missing)} in Settings to generate cover letters.")
 
 
 # ─── Page: Daily Stats ───
@@ -507,9 +642,27 @@ def render_run_page() -> None:
 
     if not _has_playwright:
         st.info(
-            "**Dry Run** and **Scrape Only** work here (uses HTTP, no browser needed). "
+            "**Dry Run** and **Scrape Only** work here (uses HTTP + APIs, no browser needed). "
             "**Real Apply** requires Playwright — install locally with: "
-            "`pip install playwright && playwright install chromium`"
+            "`pip install playwright && playwright install chromium`\n\n"
+            "Use the **Cloud Apply Assistant** page to apply manually with AI-generated cover letters."
+        )
+
+    # Check for missing CV
+    _has_cvs = any(CV_DIR.glob("*.*")) if CV_DIR.exists() else False
+    if not _has_cvs:
+        st.warning(
+            "**No CVs uploaded!** Job matching needs your CV to score jobs.\n\n"
+            "Go to **Settings > CV Management** to upload your CV (PDF or DOCX). "
+            "Without a CV, jobs will be discovered but **0 will be matched**."
+        )
+
+    # Check for Anthropic key
+    _env = _load_env()
+    if not _env.get("ANTHROPIC_API_KEY") and not os.environ.get("ANTHROPIC_API_KEY"):
+        st.warning(
+            "**No Anthropic API key set!** AI matching and cover letter generation won't work.\n\n"
+            "Go to **Settings > Credentials** to add your key."
         )
 
     # Initialize session state
@@ -903,8 +1056,8 @@ def main() -> None:
     page = st.sidebar.radio("Navigation", [
         "Run",
         "Jobs Feed",
+        "Cloud Apply Assistant",
         "Applications",
-        "Manual Apply Queue",
         "Daily Stats",
         "LinkedIn Optimizer",
         "Settings",
@@ -916,7 +1069,7 @@ def main() -> None:
         render_jobs_feed()
     elif page == "Applications":
         render_applications()
-    elif page == "Manual Apply Queue":
+    elif page == "Cloud Apply Assistant":
         render_manual_queue()
     elif page == "Daily Stats":
         render_daily_stats()
