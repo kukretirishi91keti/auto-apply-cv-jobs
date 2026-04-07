@@ -141,25 +141,33 @@ def load_config(path: Path | None = None) -> AppConfig:
     return AppConfig()
 
 
-def load_credentials() -> Credentials:
+def load_credentials(env_path: Path | None = None) -> Credentials:
     """Load credentials from environment / .env file."""
+    if env_path and env_path.exists():
+        # Load user-specific .env into os.environ temporarily
+        from dotenv import load_dotenv
+        load_dotenv(env_path, override=True)
     return Credentials()
 
 
-# Singletons
+# Singletons (used by CLI; dashboard overrides per-user)
 _config: AppConfig | None = None
 _creds: Credentials | None = None
 
 
-def get_config() -> AppConfig:
+def get_config(config_path: Path | None = None) -> AppConfig:
     global _config
+    if config_path:
+        return load_config(config_path)
     if _config is None:
         _config = load_config()
     return _config
 
 
-def get_credentials() -> Credentials:
+def get_credentials(env_path: Path | None = None) -> Credentials:
     global _creds
+    if env_path:
+        return load_credentials(env_path)
     if _creds is None:
         _creds = load_credentials()
     return _creds

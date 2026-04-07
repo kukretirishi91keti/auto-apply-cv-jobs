@@ -24,6 +24,18 @@ from src.db import (
     get_daily_stats,
     get_portal_summary,
 )
+from src.auth import (
+    is_multi_user_enabled,
+    authenticate,
+    load_users,
+    save_users,
+    add_user,
+    remove_user,
+    get_user_paths,
+    get_default_paths,
+    ensure_user_config,
+    _hash_password,
+)
 
 PORTALS = ["All", "naukri", "indeed", "foundit", "ziprecruiter", "linkedin", "glassdoor", "remoteok", "weworkremotely", "jsearch", "adzuna"]
 PORTAL_NAMES = ["naukri", "indeed", "foundit", "ziprecruiter", "linkedin", "glassdoor"]
@@ -35,9 +47,39 @@ STATUS_COLORS = {
     "failed": "🔴",
 }
 
-CV_DIR = PROJECT_ROOT / "data" / "cvs"
-ENV_PATH = PROJECT_ROOT / ".env"
-CONFIG_PATH = PROJECT_ROOT / "config" / "settings.yaml"
+# ── Default paths (single-user fallback) ──
+_DEFAULT_CV_DIR = PROJECT_ROOT / "data" / "cvs"
+_DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
+_DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "settings.yaml"
+
+
+def _get_user_id() -> str | None:
+    """Get current logged-in user ID from session state."""
+    return st.session_state.get("user_id")
+
+
+def _get_paths() -> dict[str, Path]:
+    """Get active paths — user-specific if logged in, else defaults."""
+    user_id = _get_user_id()
+    if user_id:
+        return get_user_paths(user_id)
+    return get_default_paths()
+
+
+def _cv_dir() -> Path:
+    return _get_paths()["cv_dir"]
+
+
+def _env_path() -> Path:
+    return _get_paths()["env_path"]
+
+
+def _config_path() -> Path:
+    return _get_paths()["config_path"]
+
+
+def _db_path() -> Path:
+    return _get_paths()["db_path"]
 
 
 def rows_to_df(rows: list) -> pd.DataFrame:
@@ -48,6 +90,57 @@ def rows_to_df(rows: list) -> pd.DataFrame:
 
 
 # ─── Page: Jobs Feed ───
+
+
+def _setup_user_session(user_id: str) -> None:
+    """Configure session for a specific user — set DB path, ensure dirs exist."""
+    from src.db import set_db_path
+    paths = get_user_paths(user_id)
+    set_db_path(paths["db_path"])
+    paths["cv_dir"].mkdir(parents=True, exist_ok=True)
+    ensure_user_config(user_id)
+    init_db(paths["db_path"])
+
+
+def _setup_default_session() -> None:
+    """Configure session for single-user mode (default paths)."""
+    from src.db import set_db_path
+    set_db_path(None)  # use default DB_PATH
+    _DEFAULT_CV_DIR.mkdir(parents=True, exist_ok=True)
+    init_db()
+
+
+def render_login() -> bool:
+    """Render login page. Returns True if authenticated."""
+    st.set_page_config(page_title="Auto-Apply - Login", page_icon="🔐", layout="centered")
+    st.title("Auto-Apply CV Jobs")
+    st.subheader("Login")
+
+    with st.form("login_form"):
+        email = st.text_input("Email", key="login_email")
+        password = st.text_input("Password", type="password", key="login_password")
+        submitted = st.form_submit_button("Login", type="primary")
+
+    if submitted:
+        if not email or not password:
+            st.error("Please enter both email and password.")
+            return False
+
+        user = authenticate(email, password)
+        if user:
+            st.session_state.user_id = user["id"]
+            st.session_state.user_name = user.get("name", email)
+            st.session_state.user_email = user.get("email", email)
+            st.session_state.user_is_admin = user.get("is_admin", False)
+            st.session_state.authenticated = True
+            _setup_user_session(user["id"])
+            st.rerun()
+        else:
+            st.error("Invalid email or password.")
+
+    st.divider()
+    st.caption("Contact the admin to get access.")
+    return False
 
 
 def render_jobs_feed() -> None:
@@ -190,12 +283,12 @@ def render_manual_queue() -> None:
 
     # ── Check for cover letter capability ──
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key and ENV_PATH.exists():
-        for line in ENV_PATH.read_text().splitlines():
+    if not api_key and _env_path().exists():
+        for line in _env_path().read_text().splitlines():
             if line.startswith("ANTHROPIC_API_KEY="):
                 api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
                 break
-    has_cv = any(CV_DIR.glob("*.*")) if CV_DIR.exists() else False
+    has_cv = any(_cv_dir().glob("*.*")) if _cv_dir().exists() else False
 
     st.divider()
 
@@ -268,9 +361,9 @@ def render_manual_queue() -> None:
                                     from src.cv_manager import load_all_cvs
                                     from src.config import get_config, get_credentials
 
-                                    cfg = get_config()
-                                    crd = get_credentials()
-                                    cv_texts = load_all_cvs(cfg)
+                                    cfg = get_config(_config_path())
+                                    crd = get_credentials(_env_path())
+                                    cv_texts = load_all_cvs(cfg, _cv_dir())
                                     cv_text = next(iter(cv_texts.values()), "") if cv_texts else ""
 
                                     if not cv_text:
@@ -304,7 +397,7 @@ def render_manual_queue() -> None:
 
                                     cfg = get_config()
                                     crd = get_credentials()
-                                    cv_texts_loaded = load_all_cvs(cfg)
+                                    cv_texts_loaded = load_all_cvs(cfg, _cv_dir())
                                     cv_text = next(iter(cv_texts_loaded.values()), "")
 
                                     if not cv_text:
@@ -365,8 +458,8 @@ def render_profile_booster() -> None:
 
     # Check prerequisites
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key and ENV_PATH.exists():
-        for line in ENV_PATH.read_text().splitlines():
+    if not api_key and _env_path().exists():
+        for line in _env_path().read_text().splitlines():
             if line.startswith("ANTHROPIC_API_KEY="):
                 api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
                 break
@@ -375,7 +468,7 @@ def render_profile_booster() -> None:
         st.warning("Set your ANTHROPIC_API_KEY in Settings > Credentials to use this feature.")
         return
 
-    has_cv = any(CV_DIR.glob("*.*")) if CV_DIR.exists() else False
+    has_cv = any(_cv_dir().glob("*.*")) if _cv_dir().exists() else False
     if not has_cv:
         st.warning("Upload your CV in Settings > CV Management first.")
         return
@@ -391,8 +484,8 @@ def render_profile_booster() -> None:
     # Show current CVs
     from src.cv_manager import load_all_cvs
     from src.config import get_config
-    cfg = get_config()
-    cv_texts = load_all_cvs(cfg)
+    cfg = get_config(_config_path())
+    cv_texts = load_all_cvs(cfg, _cv_dir())
 
     if cv_texts:
         with st.expander("Your Current CVs"):
@@ -519,8 +612,8 @@ def render_daily_stats() -> None:
 def _load_env() -> dict[str, str]:
     """Load current .env values."""
     env: dict[str, str] = {}
-    if ENV_PATH.exists():
-        for line in ENV_PATH.read_text().splitlines():
+    if _env_path().exists():
+        for line in _env_path().read_text().splitlines():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, _, val = line.partition("=")
@@ -533,7 +626,7 @@ def _save_env(env: dict[str, str]) -> None:
     lines = []
     for key, val in env.items():
         lines.append(f"{key}={val}")
-    ENV_PATH.write_text("\n".join(lines) + "\n")
+    _env_path().write_text("\n".join(lines) + "\n")
 
 
 def render_settings() -> None:
@@ -548,10 +641,10 @@ def render_settings() -> None:
     # ── CV Management ──
     with tab_cv:
         st.subheader("Upload CVs")
-        st.caption(f"CVs are stored in `{CV_DIR}`")
+        st.caption(f"CVs are stored in `{_cv_dir()}`")
 
-        CV_DIR.mkdir(parents=True, exist_ok=True)
-        existing_cvs = sorted(CV_DIR.glob("*.*"))
+        _cv_dir().mkdir(parents=True, exist_ok=True)
+        existing_cvs = sorted(_cv_dir().glob("*.*"))
 
         if existing_cvs:
             st.write("**Current CVs:**")
@@ -572,7 +665,7 @@ def render_settings() -> None:
         )
         if uploaded_files:
             for f in uploaded_files:
-                dest = CV_DIR / f.name
+                dest = _cv_dir() / f.name
                 dest.write_bytes(f.getvalue())
                 st.success(f"Uploaded: {f.name}")
 
@@ -686,9 +779,9 @@ def render_settings() -> None:
     # ── Search Preferences ──
     with tab_search:
         st.subheader("Search Configuration")
-        st.caption(f"Saved to `{CONFIG_PATH}`")
+        st.caption(f"Saved to `{_config_path()}`")
 
-        config = load_config()
+        config = load_config(_config_path())
 
         with st.form("search_form"):
             keywords = st.text_area(
@@ -735,8 +828,8 @@ def render_settings() -> None:
 
             if st.form_submit_button("Save Search Config", type="primary"):
                 # Read existing YAML and update
-                if CONFIG_PATH.exists():
-                    with open(CONFIG_PATH) as f:
+                if _config_path().exists():
+                    with open(_config_path()) as f:
                         raw = yaml.safe_load(f) or {}
                 else:
                     raw = {}
@@ -759,7 +852,7 @@ def render_settings() -> None:
                 raw["cvs"]["directory"] = "data/cvs"
                 raw["cvs"]["versions"] = [c for c in cv_configs if c["name"]]
 
-                with open(CONFIG_PATH, "w") as f:
+                with open(_config_path(), "w") as f:
                     yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
 
                 st.success("Search config saved to settings.yaml")
@@ -768,7 +861,7 @@ def render_settings() -> None:
     with tab_portals:
         st.subheader("Portal Configuration")
 
-        config = load_config()
+        config = load_config(_config_path())
 
         with st.form("portal_form"):
             portal_settings = {}
@@ -786,18 +879,58 @@ def render_settings() -> None:
                 portal_settings[portal] = {"enabled": enabled, "auto_apply": auto}
 
             if st.form_submit_button("Save Portal Config", type="primary"):
-                if CONFIG_PATH.exists():
-                    with open(CONFIG_PATH) as f:
+                if _config_path().exists():
+                    with open(_config_path()) as f:
                         raw = yaml.safe_load(f) or {}
                 else:
                     raw = {}
 
                 raw["portals"] = portal_settings
 
-                with open(CONFIG_PATH, "w") as f:
+                with open(_config_path(), "w") as f:
                     yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
 
                 st.success("Portal config saved to settings.yaml")
+
+    # ── Multi-User Setup (only in single-user mode) ──
+    if not is_multi_user_enabled():
+        st.divider()
+        st.subheader("Enable Multi-User Mode")
+        st.caption(
+            "Share this dashboard with up to 10 people. Each user gets isolated "
+            "data (CVs, jobs, settings). You'll be the admin."
+        )
+
+        with st.form("enable_multiuser"):
+            col1, col2 = st.columns(2)
+            with col1:
+                admin_name = st.text_input("Your Name", key="mu_name")
+                admin_email = st.text_input("Your Email", key="mu_email")
+            with col2:
+                admin_pass = st.text_input("Set Password", type="password", key="mu_pass")
+                admin_pass2 = st.text_input("Confirm Password", type="password", key="mu_pass2")
+
+            if st.form_submit_button("Enable Multi-User & Create Admin Account"):
+                if not admin_name or not admin_email or not admin_pass:
+                    st.error("All fields are required.")
+                elif admin_pass != admin_pass2:
+                    st.error("Passwords don't match.")
+                elif len(admin_pass) < 4:
+                    st.error("Password must be at least 4 characters.")
+                else:
+                    success, msg = add_user(admin_name, admin_email, admin_pass, is_admin=True)
+                    if success:
+                        st.success(
+                            f"Multi-user mode enabled! {msg}\n\n"
+                            "The page will now require login. Use your email and password."
+                        )
+                        st.balloons()
+                        # Clear session so login page appears
+                        st.session_state.clear()
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        st.error(msg)
 
 
 # ─── Page: Run ───
@@ -823,7 +956,7 @@ def render_run_page() -> None:
         )
 
     # Check for missing CV
-    _has_cvs = any(CV_DIR.glob("*.*")) if CV_DIR.exists() else False
+    _has_cvs = any(_cv_dir().glob("*.*")) if _cv_dir().exists() else False
     if not _has_cvs:
         st.warning(
             "**No CVs uploaded!** Job matching needs your CV to score jobs.\n\n"
@@ -1046,8 +1179,8 @@ def render_linkedin_optimizer() -> None:
 
     # Check for API key
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key and ENV_PATH.exists():
-        for line in ENV_PATH.read_text().splitlines():
+    if not api_key and _env_path().exists():
+        for line in _env_path().read_text().splitlines():
             if line.startswith("ANTHROPIC_API_KEY="):
                 api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
                 break
@@ -1222,15 +1355,130 @@ def _render_optimizer_results(data: dict) -> None:
             st.success(f"**Rewrite:** {cta['rewrite']}")
 
 
+# ─── Page: User Management (admin only) ───
+
+
+def render_user_management() -> None:
+    """User Management — admin can add/remove users (max 10)."""
+    st.header("User Management")
+
+    if not st.session_state.get("user_is_admin"):
+        st.error("Admin access required.")
+        return
+
+    users = load_users()
+
+    # ── Current Users ──
+    st.subheader(f"Current Users ({len(users)}/10)")
+
+    if users:
+        for i, user in enumerate(users):
+            with st.container(border=True):
+                col1, col2, col3, col4 = st.columns([2, 3, 1, 1])
+                col1.write(f"**{user.get('name', '?')}**")
+                col2.write(user.get("email", "?"))
+                col3.write("Admin" if user.get("is_admin") else "User")
+                # Don't allow deleting yourself
+                if user.get("email") != st.session_state.get("user_email"):
+                    if col4.button("Remove", key=f"rm_user_{i}"):
+                        success, msg = remove_user(user["email"])
+                        if success:
+                            st.success(msg)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+                else:
+                    col4.write("(you)")
+    else:
+        st.info("No users configured.")
+
+    # ── Add New User ──
+    st.divider()
+    st.subheader("Add New User")
+
+    if len(users) >= 10:
+        st.warning("Maximum 10 users reached. Remove a user to add a new one.")
+        return
+
+    with st.form("add_user_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            new_name = st.text_input("Full Name", key="new_user_name")
+            new_email = st.text_input("Email", key="new_user_email")
+        with col2:
+            new_password = st.text_input("Password", type="password", key="new_user_pass")
+            new_is_admin = st.checkbox("Admin privileges", key="new_user_admin")
+
+        if st.form_submit_button("Add User", type="primary"):
+            if not new_name or not new_email or not new_password:
+                st.error("All fields are required.")
+            elif len(new_password) < 4:
+                st.error("Password must be at least 4 characters.")
+            else:
+                success, msg = add_user(new_name, new_email, new_password, new_is_admin)
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+    # ── Setup Instructions ──
+    st.divider()
+    st.subheader("How It Works")
+    st.markdown("""
+Each user gets **completely isolated data**:
+- Their own CV uploads
+- Their own job database (discovered jobs, matches, applications)
+- Their own search settings and keywords
+- Their own API credentials
+
+**To enable multi-user mode for the first time:**
+1. Add yourself as the first admin user above
+2. Share the dashboard URL with your friends
+3. Each person logs in with their email/password
+4. Each person uploads their own CV and sets their own keywords in Settings
+
+**Data is NOT shared between users** — each person's job search is independent.
+""")
+
+
 # ─── Main ───
 
 
 def main() -> None:
-    st.set_page_config(page_title="Auto-Apply Dashboard", page_icon="📋", layout="wide")
-    init_db()
+    multi_user = is_multi_user_enabled()
 
+    # ── Multi-user: require login ──
+    if multi_user:
+        if not st.session_state.get("authenticated"):
+            render_login()
+            return
+        # Setup user-specific paths/DB on each rerun
+        _setup_user_session(st.session_state.user_id)
+    else:
+        # Single-user: original behavior (no login)
+        st.set_page_config(page_title="Auto-Apply Dashboard", page_icon="📋", layout="wide")
+        _setup_default_session()
+
+    # ── Authenticated (or single-user) — render dashboard ──
+    if multi_user:
+        st.set_page_config(page_title="Auto-Apply Dashboard", page_icon="📋", layout="wide")
+
+    # Sidebar
     st.sidebar.title("Auto-Apply CV Jobs")
-    page = st.sidebar.radio("Navigation", [
+
+    if multi_user:
+        user_name = st.session_state.get("user_name", "User")
+        st.sidebar.markdown(f"**Logged in as:** {user_name}")
+        if st.sidebar.button("Logout"):
+            for key in ["authenticated", "user_id", "user_name", "user_email", "user_is_admin"]:
+                st.session_state.pop(key, None)
+            from src.db import set_db_path
+            set_db_path(None)
+            st.rerun()
+        st.sidebar.divider()
+
+    nav_items = [
         "Run",
         "Jobs Feed",
         "Cloud Apply Assistant",
@@ -1239,7 +1487,13 @@ def main() -> None:
         "Daily Stats",
         "LinkedIn Optimizer",
         "Settings",
-    ])
+    ]
+
+    # Admin-only: User Management
+    if multi_user and st.session_state.get("user_is_admin"):
+        nav_items.append("User Management")
+
+    page = st.sidebar.radio("Navigation", nav_items)
 
     if page == "Run":
         render_run_page()
@@ -1257,6 +1511,8 @@ def main() -> None:
         render_linkedin_optimizer()
     elif page == "Settings":
         render_settings()
+    elif page == "User Management":
+        render_user_management()
 
 
 if __name__ == "__main__":

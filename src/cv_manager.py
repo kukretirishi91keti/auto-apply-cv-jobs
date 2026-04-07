@@ -44,16 +44,20 @@ def extract_cv_text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
 
 
-def load_all_cvs(config: AppConfig) -> dict[str, str]:
+def load_all_cvs(config: AppConfig, cv_dir_override: Path | None = None) -> dict[str, str]:
     """Load and extract text from all CV files.
 
     First loads configured CV versions from settings.yaml, then auto-discovers
     any additional files in the CV directory. This means users can just upload
     CVs without editing config — they'll be auto-detected.
 
+    Args:
+        config: App configuration
+        cv_dir_override: Optional override for CV directory (for multi-user support)
+
     Returns dict mapping cv_name -> extracted_text.
     """
-    cv_dir = PROJECT_ROOT / config.cvs.directory
+    cv_dir = cv_dir_override or (PROJECT_ROOT / config.cvs.directory)
     cvs: dict[str, str] = {}
     loaded_files: set[str] = set()
 

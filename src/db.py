@@ -11,6 +11,18 @@ from typing import Any, Generator
 from src.config import PROJECT_ROOT
 
 DB_PATH = PROJECT_ROOT / "auto_apply.db"
+_active_db_path: Path | None = None  # overridden by dashboard for multi-user
+
+
+def set_db_path(path: Path | None) -> None:
+    """Set the active database path (for multi-user support)."""
+    global _active_db_path
+    _active_db_path = path
+
+
+def get_db_path() -> Path:
+    """Get the active database path."""
+    return _active_db_path or DB_PATH
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -69,7 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_daily_runs_date ON daily_runs(run_date);
 
 def init_db(db_path: Path | None = None) -> None:
     """Initialize database schema."""
-    path = db_path or DB_PATH
+    path = db_path or get_db_path()
     with get_connection(path) as conn:
         conn.executescript(SCHEMA)
         _run_migrations(conn)
@@ -91,7 +103,7 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
 
 @contextmanager
 def get_connection(db_path: Path | None = None) -> Generator[sqlite3.Connection, None, None]:
-    path = db_path or DB_PATH
+    path = db_path or get_db_path()
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
