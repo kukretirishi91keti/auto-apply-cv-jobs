@@ -352,6 +352,135 @@ Write the tailored CV content now:"""
                     st.caption(f"Set up {' and '.join(missing)} in Settings to generate cover letters.")
 
 
+# ─── Page: Profile Booster ───
+
+
+def render_profile_booster() -> None:
+    """Profile Booster — analyze CV gaps vs matched jobs and suggest improvements."""
+    st.header("Profile Booster")
+    st.caption(
+        "Analyzes your CV against recently matched jobs to find gaps and suggest "
+        "skills, keywords, and experience bullets to add."
+    )
+
+    # Check prerequisites
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key and ENV_PATH.exists():
+        for line in ENV_PATH.read_text().splitlines():
+            if line.startswith("ANTHROPIC_API_KEY="):
+                api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+
+    if not api_key:
+        st.warning("Set your ANTHROPIC_API_KEY in Settings > Credentials to use this feature.")
+        return
+
+    has_cv = any(CV_DIR.glob("*.*")) if CV_DIR.exists() else False
+    if not has_cv:
+        st.warning("Upload your CV in Settings > CV Management first.")
+        return
+
+    # Get matched jobs from DB
+    scored_jobs = get_cloud_apply_queue(min_ai_score=0.3, limit=50)
+    if not scored_jobs:
+        st.info("No scored jobs yet. Run a **Dry Run** first to discover and score jobs.")
+        return
+
+    st.metric("Scored Jobs to Analyze", len(scored_jobs))
+
+    # Show current CVs
+    from src.cv_manager import load_all_cvs
+    from src.config import get_config
+    cfg = get_config()
+    cv_texts = load_all_cvs(cfg)
+
+    if cv_texts:
+        with st.expander("Your Current CVs"):
+            for name, text in cv_texts.items():
+                st.markdown(f"**{name}** ({len(text)} chars)")
+                st.text(text[:500] + "...")
+
+    # Analyze button
+    if st.button("Analyze CV Gaps & Boost Profile", type="primary", key="boost_btn"):
+        with st.spinner("Analyzing your CV against matched jobs..."):
+            try:
+                import anthropic
+
+                # Build job summaries
+                job_summaries = []
+                for row in scored_jobs[:20]:  # top 20 jobs
+                    job = dict(row)
+                    ai_score = job.get("ai_score", 0) or 0
+                    job_summaries.append(
+                        f"- {job.get('title', '?')} at {job.get('company', '?')} "
+                        f"(AI Score: {ai_score:.1f}, CV: {job.get('selected_cv', '?')})\n"
+                        f"  Description: {(job.get('description', '') or '')[:200]}"
+                    )
+
+                # Build CV summary
+                cv_summary = ""
+                for name, text in cv_texts.items():
+                    cv_summary += f"\n--- CV: {name} ---\n{text[:2000]}\n"
+
+                prompt = f"""You are a senior career strategist. Analyze this candidate's CVs against \
+the jobs they're targeting. Identify specific gaps and provide actionable improvements.
+
+CANDIDATE'S CVs:
+{cv_summary}
+
+JOBS THEY'RE TARGETING (with AI match scores 0-1):
+{chr(10).join(job_summaries)}
+
+Provide a detailed analysis in this exact structure:
+
+## MATCH PATTERN ANALYSIS
+- What types of roles score highest (0.6+) vs lowest?
+- What's the common thread in high-scoring matches?
+
+## MISSING KEYWORDS (Top 15)
+List specific keywords/phrases that appear in job descriptions but are MISSING from the CVs.
+These are hurting keyword matching scores.
+
+## EXPERIENCE GAPS
+List 3-5 specific experience areas that would improve match rates.
+For each, suggest a bullet point the candidate could truthfully add if they have that experience.
+
+## SKILLS TO ADD
+List 10 specific skills (technical + domain) to add to the CV, prioritized by impact.
+
+## QUICK WINS (Do This Today)
+5 specific, actionable changes to make RIGHT NOW to boost match rates:
+1. [specific change with exact wording]
+2. ...
+
+## CV VERSION STRATEGY
+Which CV version to use for which job type. Should they create a new CV variant?"""
+
+                client = anthropic.Anthropic(api_key=api_key)
+                response = client.messages.create(
+                    model=cfg.matching.ai_model,
+                    max_tokens=3000,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+
+                st.session_state.boost_result = response.content[0].text.strip()
+            except Exception as e:
+                st.error(f"Analysis failed: {e}")
+
+    # Display results
+    if "boost_result" in st.session_state and st.session_state.boost_result:
+        st.divider()
+        st.markdown(st.session_state.boost_result)
+
+        # Download button
+        st.download_button(
+            "Download Analysis",
+            st.session_state.boost_result,
+            file_name="profile_boost_analysis.md",
+            mime="text/markdown",
+        )
+
+
 # ─── Page: Daily Stats ───
 
 
@@ -447,8 +576,7 @@ def render_settings() -> None:
                 dest.write_bytes(f.getvalue())
                 st.success(f"Uploaded: {f.name}")
 
-            # Update settings.yaml with new CV filenames
-            st.info("Update the CV names in **Search Preferences** or `config/settings.yaml`.")
+            st.success("CVs will be auto-detected on next run. No config needed!")
 
     # ── Credentials ──
     with tab_creds:
@@ -734,11 +862,14 @@ def render_run_page() -> None:
                 disabled=is_running,
             )
             portals = st.multiselect(
-                "Portals",
+                "Portals (direct scrape)",
                 PORTAL_NAMES,
-                default=PORTAL_NAMES,
+                default=["linkedin"],  # only LinkedIn works via HTTP; others need browser
                 key="run_portals",
                 disabled=is_running,
+                help="JSearch API already covers Indeed, Glassdoor, ZipRecruiter. "
+                     "LinkedIn is the only portal that works via direct scraping on cloud. "
+                     "Others (Naukri, Indeed, Foundit, etc.) require a browser.",
             )
         with col2:
             limit = st.number_input(
@@ -1103,6 +1234,7 @@ def main() -> None:
         "Run",
         "Jobs Feed",
         "Cloud Apply Assistant",
+        "Profile Booster",
         "Applications",
         "Daily Stats",
         "LinkedIn Optimizer",
@@ -1117,6 +1249,8 @@ def main() -> None:
         render_applications()
     elif page == "Cloud Apply Assistant":
         render_manual_queue()
+    elif page == "Profile Booster":
+        render_profile_booster()
     elif page == "Daily Stats":
         render_daily_stats()
     elif page == "LinkedIn Optimizer":

@@ -45,23 +45,47 @@ def extract_cv_text(path: Path) -> str:
 
 
 def load_all_cvs(config: AppConfig) -> dict[str, str]:
-    """Load and extract text from all configured CV versions.
+    """Load and extract text from all CV files.
+
+    First loads configured CV versions from settings.yaml, then auto-discovers
+    any additional files in the CV directory. This means users can just upload
+    CVs without editing config — they'll be auto-detected.
 
     Returns dict mapping cv_name -> extracted_text.
     """
     cv_dir = PROJECT_ROOT / config.cvs.directory
     cvs: dict[str, str] = {}
+    loaded_files: set[str] = set()
 
+    # 1. Load configured CV versions (named/described in settings.yaml)
     for version in config.cvs.versions:
         cv_path = cv_dir / version.file
         if cv_path.exists():
             try:
                 cvs[version.name] = extract_cv_text(cv_path)
+                loaded_files.add(version.file)
                 logger.info("Loaded CV: %s (%s)", version.name, version.file)
             except Exception as e:
                 logger.warning("Failed to load CV %s: %s", version.name, e)
         else:
             logger.warning("CV file not found: %s", cv_path)
+
+    # 2. Auto-discover any additional CV files not in config
+    if cv_dir.exists():
+        for cv_file in sorted(cv_dir.iterdir()):
+            if cv_file.name in loaded_files:
+                continue
+            if cv_file.suffix.lower() not in (".pdf", ".docx", ".doc", ".txt"):
+                continue
+            try:
+                name = cv_file.stem.replace(" ", "_").replace("-", "_")
+                text = extract_cv_text(cv_file)
+                if text.strip():
+                    cvs[name] = text
+                    loaded_files.add(cv_file.name)
+                    logger.info("Auto-discovered CV: %s (%s)", name, cv_file.name)
+            except Exception as e:
+                logger.warning("Failed to load auto-discovered CV %s: %s", cv_file.name, e)
 
     return cvs
 
