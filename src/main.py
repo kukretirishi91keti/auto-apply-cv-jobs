@@ -299,33 +299,37 @@ def run_once(
     dry_run: bool = False,
     scrape_only: bool = False,
     limit: int | None = None,
+    env_path: str | None = None,
+    config_path: str | None = None,
+    db_path: str | None = None,
+    cv_dir: str | None = None,
 ) -> None:
     """One-shot run."""
-    # Support user-specific paths via environment variables (set by dashboard)
-    env_path = os.environ.get("AUTO_APPLY_ENV_PATH")
-    config_path = os.environ.get("AUTO_APPLY_CONFIG_PATH")
-    db_path_env = os.environ.get("AUTO_APPLY_DB_PATH")
-    cv_dir_env = os.environ.get("AUTO_APPLY_CV_DIR")
+    # CLI args take priority, then env vars, then defaults
+    env_path = env_path or os.environ.get("AUTO_APPLY_ENV_PATH")
+    config_path = config_path or os.environ.get("AUTO_APPLY_CONFIG_PATH")
+    db_path = db_path or os.environ.get("AUTO_APPLY_DB_PATH")
+    cv_dir = cv_dir or os.environ.get("AUTO_APPLY_CV_DIR")
 
     if env_path:
         logger.info("Using user-specific env: %s", env_path)
     if config_path:
         logger.info("Using user-specific config: %s", config_path)
-    if cv_dir_env:
-        logger.info("Using user-specific CV dir: %s", cv_dir_env)
-    if db_path_env:
-        logger.info("Using user-specific DB: %s", db_path_env)
+    if cv_dir:
+        logger.info("Using user-specific CV dir: %s", cv_dir)
+    if db_path:
+        logger.info("Using user-specific DB: %s", db_path)
 
     config = get_config(Path(config_path) if config_path else None)
     creds = get_credentials(Path(env_path) if env_path else None)
 
-    if db_path_env:
+    if db_path:
         from src.db import set_db_path
-        set_db_path(Path(db_path_env))
+        set_db_path(Path(db_path))
 
     # Store cv_dir override for downstream use
-    if cv_dir_env:
-        config._cv_dir_override = Path(cv_dir_env)
+    if cv_dir:
+        config._cv_dir_override = Path(cv_dir)
 
     asyncio.run(run_pipeline(config, creds, portals, dry_run, scrape_only, limit))
 
@@ -352,6 +356,10 @@ def cli() -> None:
     parser.add_argument("--schedule", action="store_true", help="Run on daily schedule")
     parser.add_argument("--scrape-only", action="store_true", help="Only scrape, skip matching/applying")
     parser.add_argument("--dashboard", action="store_true", help="Launch web dashboard")
+    parser.add_argument("--env-path", type=str, help="Path to user-specific .env file")
+    parser.add_argument("--config-path", type=str, help="Path to user-specific settings.yaml")
+    parser.add_argument("--db-path", type=str, help="Path to user-specific database")
+    parser.add_argument("--cv-dir", type=str, help="Path to user-specific CV directory")
     args = parser.parse_args()
 
     if args.dashboard:
@@ -366,7 +374,11 @@ def cli() -> None:
         run_scheduled()
     else:
         portals = args.portal if args.portal else None
-        run_once(portals=portals, dry_run=args.dry_run, scrape_only=args.scrape_only, limit=args.limit)
+        run_once(
+            portals=portals, dry_run=args.dry_run, scrape_only=args.scrape_only,
+            limit=args.limit, env_path=args.env_path, config_path=args.config_path,
+            db_path=args.db_path, cv_dir=args.cv_dir,
+        )
 
 
 if __name__ == "__main__":
