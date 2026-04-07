@@ -25,14 +25,36 @@ class MatchResult:
 def keyword_score(job_title: str, job_description: str, keywords: list[str]) -> float:
     """Stage 1: Fast keyword matching (free).
 
-    Returns 0.0–1.0 based on proportion of search keywords found.
+    Returns 0.0–1.0. Uses ANY-match logic: if ANY keyword matches, the job
+    passes. Score = proportion of keywords found, but a single match is enough
+    to pass the threshold (returns at least 0.3 for any match).
+
+    Keywords are split on commas to handle compound entries like
+    "BFSI, FinTech, Life Insurance" as separate terms.
     """
     if not keywords:
         return 1.0  # no keywords configured = pass everything
 
+    # Split compound keywords on commas
+    terms: list[str] = []
+    for kw in keywords:
+        for part in kw.split(","):
+            term = part.strip().lower()
+            if term and term not in terms:
+                terms.append(term)
+
+    if not terms:
+        return 1.0
+
     text = f"{job_title} {job_description}".lower()
-    matches = sum(1 for kw in keywords if kw.lower() in text)
-    return matches / len(keywords)
+    matches = sum(1 for term in terms if term in text)
+
+    if matches == 0:
+        return 0.0
+
+    # Any match = at least 0.3 (passes default threshold)
+    raw_score = matches / len(terms)
+    return max(raw_score, 0.3)
 
 
 def ai_score_job(
@@ -47,11 +69,16 @@ def ai_score_job(
     Returns (score, recommended_cv, reasoning).
     """
     cv_summaries = "\n".join(
-        f"- {name}: {text[:500]}..." for name, text in cv_texts.items()
+        f"- {name}: {text[:1500]}..." for name, text in cv_texts.items()
     )
 
-    prompt = f"""Rate how well this candidate matches this job on a scale of 0.0 to 1.0.
-Also recommend which CV version to use.
+    prompt = f"""You are a senior recruiter. Rate how well this candidate matches this job.
+
+Consider:
+- Role level alignment (VP/Director/Manager/Associate)
+- Industry/domain overlap (BFSI, FinTech, Insurance, Product, etc.)
+- Skills and experience relevance
+- Seniority match
 
 Job Title: {job_title}
 Job Description:
@@ -59,6 +86,10 @@ Job Description:
 
 Candidate CVs:
 {cv_summaries}
+
+Score 0.7+ if the candidate's experience is directly relevant.
+Score 0.5-0.7 if there's partial overlap in domain or skills.
+Score below 0.5 if the role is clearly misaligned.
 
 Respond in exactly this format:
 SCORE: <0.0-1.0>

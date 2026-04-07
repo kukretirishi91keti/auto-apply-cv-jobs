@@ -11,6 +11,18 @@ from typing import Any, Generator
 from src.config import PROJECT_ROOT
 
 DB_PATH = PROJECT_ROOT / "auto_apply.db"
+_active_db_path: Path | None = None  # overridden by dashboard for multi-user
+
+
+def set_db_path(path: Path | None) -> None:
+    """Set the active database path (for multi-user support)."""
+    global _active_db_path
+    _active_db_path = path
+
+
+def get_db_path() -> Path:
+    """Get the active database path."""
+    return _active_db_path or DB_PATH
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -69,7 +81,7 @@ CREATE INDEX IF NOT EXISTS idx_daily_runs_date ON daily_runs(run_date);
 
 def init_db(db_path: Path | None = None) -> None:
     """Initialize database schema."""
-    path = db_path or DB_PATH
+    path = db_path or get_db_path()
     with get_connection(path) as conn:
         conn.executescript(SCHEMA)
         _run_migrations(conn)
@@ -91,7 +103,7 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
 
 @contextmanager
 def get_connection(db_path: Path | None = None) -> Generator[sqlite3.Connection, None, None]:
-    path = db_path or DB_PATH
+    path = db_path or get_db_path()
     conn = sqlite3.connect(str(path))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -296,6 +308,47 @@ def get_manual_apply_queue() -> list[sqlite3.Row]:
                WHERE j.portal IN ('linkedin', 'glassdoor')
                  AND (a.status IS NULL OR a.status = 'scrape_only')
                ORDER BY j.discovered_at DESC""",
+        ).fetchall()
+
+
+def get_cloud_apply_queue(
+    min_ai_score: float | None = None,
+    portal: str | None = None,
+    limit: int = 100,
+) -> list[sqlite3.Row]:
+    """Get all jobs awaiting application (for Cloud Apply Assistant).
+
+    Includes ALL portals — not just scrape-only. Jobs that haven't been
+    applied to yet, ordered by AI score (best matches first).
+    """
+    with get_connection() as conn:
+        conditions = ["(a.status IS NULL OR a.status IN ('scrape_only', 'pending'))"]
+        params: list[Any] = []
+
+        if min_ai_score is not None:
+            conditions.append("j.ai_score >= ?")
+            params.append(min_ai_score)
+        if portal:
+            conditions.append("j.portal = ?")
+            params.append(portal)
+
+        # Must have a URL to apply
+        conditions.append("j.url IS NOT NULL AND j.url != ''")
+
+        where = " AND ".join(conditions)
+        params.append(limit)
+
+        return conn.execute(
+            f"""SELECT j.id AS job_id, j.title, j.company, j.location, j.portal,
+                       j.url, j.salary, j.description, j.keyword_score, j.ai_score,
+                       j.selected_cv, j.discovered_at,
+                       a.status AS app_status
+                FROM jobs j
+                LEFT JOIN applications a ON j.id = a.job_id
+                WHERE {where}
+                ORDER BY COALESCE(j.ai_score, 0) DESC, j.keyword_score DESC
+                LIMIT ?""",
+            params,
         ).fetchall()
 
 

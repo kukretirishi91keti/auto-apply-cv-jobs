@@ -19,12 +19,25 @@ from src.db import (
     get_jobs_feed,
     get_applications,
     get_manual_apply_queue,
+    get_cloud_apply_queue,
     mark_manually_applied,
     get_daily_stats,
     get_portal_summary,
 )
+from src.auth import (
+    is_multi_user_enabled,
+    authenticate,
+    load_users,
+    save_users,
+    add_user,
+    remove_user,
+    get_user_paths,
+    get_default_paths,
+    ensure_user_config,
+    _hash_password,
+)
 
-PORTALS = ["All", "naukri", "indeed", "foundit", "ziprecruiter", "linkedin", "glassdoor"]
+PORTALS = ["All", "naukri", "indeed", "foundit", "ziprecruiter", "linkedin", "glassdoor", "remoteok", "weworkremotely", "jsearch", "adzuna"]
 PORTAL_NAMES = ["naukri", "indeed", "foundit", "ziprecruiter", "linkedin", "glassdoor"]
 STATUS_COLORS = {
     "applied": "🟢",
@@ -34,9 +47,39 @@ STATUS_COLORS = {
     "failed": "🔴",
 }
 
-CV_DIR = PROJECT_ROOT / "data" / "cvs"
-ENV_PATH = PROJECT_ROOT / ".env"
-CONFIG_PATH = PROJECT_ROOT / "config" / "settings.yaml"
+# ── Default paths (single-user fallback) ──
+_DEFAULT_CV_DIR = PROJECT_ROOT / "data" / "cvs"
+_DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
+_DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "settings.yaml"
+
+
+def _get_user_id() -> str | None:
+    """Get current logged-in user ID from session state."""
+    return st.session_state.get("user_id")
+
+
+def _get_paths() -> dict[str, Path]:
+    """Get active paths — user-specific if logged in, else defaults."""
+    user_id = _get_user_id()
+    if user_id:
+        return get_user_paths(user_id)
+    return get_default_paths()
+
+
+def _cv_dir() -> Path:
+    return _get_paths()["cv_dir"]
+
+
+def _env_path() -> Path:
+    return _get_paths()["env_path"]
+
+
+def _config_path() -> Path:
+    return _get_paths()["config_path"]
+
+
+def _db_path() -> Path:
+    return _get_paths()["db_path"]
 
 
 def rows_to_df(rows: list) -> pd.DataFrame:
@@ -47,6 +90,57 @@ def rows_to_df(rows: list) -> pd.DataFrame:
 
 
 # ─── Page: Jobs Feed ───
+
+
+def _setup_user_session(user_id: str) -> None:
+    """Configure session for a specific user — set DB path, ensure dirs exist."""
+    from src.db import set_db_path
+    paths = get_user_paths(user_id)
+    set_db_path(paths["db_path"])
+    paths["cv_dir"].mkdir(parents=True, exist_ok=True)
+    ensure_user_config(user_id)
+    init_db(paths["db_path"])
+
+
+def _setup_default_session() -> None:
+    """Configure session for single-user mode (default paths)."""
+    from src.db import set_db_path
+    set_db_path(None)  # use default DB_PATH
+    _DEFAULT_CV_DIR.mkdir(parents=True, exist_ok=True)
+    init_db()
+
+
+def render_login() -> bool:
+    """Render login page. Returns True if authenticated."""
+    st.set_page_config(page_title="Auto-Apply - Login", page_icon="🔐", layout="centered")
+    st.title("Auto-Apply CV Jobs")
+    st.subheader("Login")
+
+    with st.form("login_form"):
+        email = st.text_input("Email", key="login_email")
+        password = st.text_input("Password", type="password", key="login_password")
+        submitted = st.form_submit_button("Login", type="primary")
+
+    if submitted:
+        if not email or not password:
+            st.error("Please enter both email and password.")
+            return False
+
+        user = authenticate(email, password)
+        if user:
+            st.session_state.user_id = user["id"]
+            st.session_state.user_name = user.get("name", email)
+            st.session_state.user_email = user.get("email", email)
+            st.session_state.user_is_admin = user.get("is_admin", False)
+            st.session_state.authenticated = True
+            _setup_user_session(user["id"])
+            st.rerun()
+        else:
+            st.error("Invalid email or password.")
+
+    st.divider()
+    st.caption("Contact the admin to get access.")
+    return False
 
 
 def render_jobs_feed() -> None:
@@ -132,43 +226,352 @@ def render_applications() -> None:
 
 
 def render_manual_queue() -> None:
-    """Manual Apply Queue — LinkedIn/Glassdoor scrape-only jobs."""
-    st.header("Manual Apply Queue")
-    st.caption("Jobs from LinkedIn & Glassdoor that need manual application")
+    """Cloud Apply Assistant — apply to matched jobs without Playwright."""
+    st.header("Cloud Apply Assistant")
+    st.caption(
+        "Apply to jobs directly from your browser — no Playwright needed. "
+        "Click 'Apply Now' to open the job page, use the generated cover letter, and mark as applied."
+    )
 
-    queue = get_manual_apply_queue()
+    # ── Filters ──
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        portal_filter = st.selectbox("Portal", PORTALS, key="caq_portal")
+    with col2:
+        min_score = st.slider("Min AI Score", 0.0, 1.0, 0.0, 0.1, key="caq_score")
+    with col3:
+        view_mode = st.radio("View", ["Best Matches", "All Jobs"], key="caq_view", horizontal=True)
 
-    if not queue:
-        st.info("No scrape-only jobs in queue. Run `auto-apply --scrape-only --portal linkedin` to discover jobs.")
+    portal_val = portal_filter if portal_filter != "All" else None
+    score_val = min_score if min_score > 0 else None
+
+    # Use cloud apply queue (all portals, sorted by score)
+    if view_mode == "Best Matches":
+        queue = get_cloud_apply_queue(min_ai_score=score_val, portal=portal_val)
+    else:
+        queue = get_cloud_apply_queue(portal=portal_val)
+
+    # Also include legacy manual queue
+    legacy_queue = get_manual_apply_queue()
+    legacy_ids = {dict(r).get("job_id") for r in legacy_queue}
+    queue_ids = {dict(r).get("job_id") for r in queue}
+    # Merge legacy items not already in queue
+    all_items = list(queue)
+    for r in legacy_queue:
+        if dict(r).get("job_id") not in queue_ids:
+            all_items.append(r)
+
+    if not all_items:
+        st.info("No jobs in queue. Run a **Dry Run** first to discover and score jobs.")
         return
 
-    st.metric("Jobs to Review", len(queue))
+    # ── Stats ──
+    scored = [dict(r) for r in all_items if dict(r).get("ai_score")]
+    unscored = [dict(r) for r in all_items if not dict(r).get("ai_score")]
+    cols = st.columns(3)
+    cols[0].metric("Total Jobs", len(all_items))
+    cols[1].metric("AI Scored", len(scored))
+    cols[2].metric("Unscored", len(unscored))
 
-    for row in queue:
+    if unscored and not scored:
+        st.warning(
+            "Jobs found but none have AI scores. To score jobs:\n"
+            "1. **Upload your CV** in Settings > CV Management\n"
+            "2. **Set your Anthropic API key** in Settings > Credentials\n"
+            "3. Run a **Dry Run** — jobs will be scored against your CV"
+        )
+
+    # ── Check for cover letter capability ──
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key and _env_path().exists():
+        for line in _env_path().read_text().splitlines():
+            if line.startswith("ANTHROPIC_API_KEY="):
+                api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+    has_cv = any(_cv_dir().glob("*.*")) if _cv_dir().exists() else False
+
+    st.divider()
+
+    # ── Job Cards ──
+    for i, row in enumerate(all_items):
         job = dict(row)
-        with st.container(border=True):
-            left, right = st.columns([4, 1])
-            with left:
-                title = job.get("title", "Unknown")
-                company = job.get("company", "Unknown")
-                url = job.get("url", "")
-                location = job.get("location", "")
-                portal = job.get("portal", "")
-                salary = job.get("salary", "")
+        job_id = job.get("job_id")
+        title = job.get("title", "Unknown")
+        company = job.get("company", "Unknown")
+        url = job.get("url", "")
+        location = job.get("location", "")
+        portal = job.get("portal", "")
+        salary = job.get("salary", "")
+        ai_score = job.get("ai_score")
+        kw_score = job.get("keyword_score")
+        description = job.get("description", "")
 
+        with st.container(border=True):
+            # ── Header row ──
+            header_col, score_col, action_col = st.columns([3, 1, 1])
+
+            with header_col:
                 if url:
                     st.markdown(f"### [{title}]({url})")
                 else:
                     st.markdown(f"### {title}")
-                st.write(f"**{company}** | {location} | {portal.upper()}")
+                portal_badge = portal.upper() if portal else "?"
+                info_parts = [f"**{company}**", location, portal_badge]
                 if salary:
-                    st.write(f"Salary: {salary}")
+                    info_parts.append(f"Salary: {salary}")
+                st.write(" | ".join(filter(None, info_parts)))
 
-            with right:
-                job_id = job.get("job_id")
-                if st.button("Mark Applied", key=f"mark_{job_id}", type="primary"):
+            with score_col:
+                if ai_score is not None:
+                    score_pct = int(ai_score * 100)
+                    color = "green" if score_pct >= 70 else "orange" if score_pct >= 50 else "red"
+                    st.markdown(f"**AI: :{color}[{score_pct}%]**")
+                if kw_score is not None:
+                    st.caption(f"KW: {int(kw_score * 100)}%")
+
+            with action_col:
+                if url:
+                    st.link_button("Apply Now", url, type="primary")
+                if st.button("Mark Applied", key=f"mark_{job_id}_{i}"):
                     mark_manually_applied(job_id)
                     st.rerun()
+
+            # ── Expandable details ──
+            with st.expander("Details & Cover Letter"):
+                if description:
+                    st.markdown("**Job Description:**")
+                    st.text(description[:500] + ("..." if len(description) > 500 else ""))
+
+                # Cover letter generation
+                if api_key and has_cv:
+                    cl_key = f"cover_letter_{job_id}"
+                    if cl_key in st.session_state:
+                        st.markdown("**Generated Cover Letter:**")
+                        st.text_area(
+                            "Copy this cover letter",
+                            value=st.session_state[cl_key],
+                            height=200,
+                            key=f"cl_text_{job_id}_{i}",
+                        )
+                    else:
+                        if st.button("Generate Cover Letter", key=f"gen_cl_{job_id}_{i}"):
+                            with st.spinner("Generating cover letter..."):
+                                try:
+                                    from src.cover_letter import generate_cover_letter
+                                    from src.cv_manager import load_all_cvs
+                                    from src.config import get_config, get_credentials
+
+                                    cfg = get_config(_config_path())
+                                    crd = get_credentials(_env_path())
+                                    cv_texts = load_all_cvs(cfg, _cv_dir())
+                                    cv_text = next(iter(cv_texts.values()), "") if cv_texts else ""
+
+                                    if not cv_text:
+                                        st.error("Could not extract text from CV. Check Settings > CV Management.")
+                                    else:
+                                        letter = generate_cover_letter(
+                                            title, company, description or "", cv_text, cfg, crd,
+                                        )
+                                        st.session_state[cl_key] = letter
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"Cover letter generation failed: {e}")
+                    # CV Tailor — rewrite CV highlights for this specific job
+                    st.divider()
+                    tailor_key = f"cv_tailor_{job_id}"
+                    if tailor_key in st.session_state:
+                        st.markdown("**Tailored CV Highlights (copy to update your CV):**")
+                        st.text_area(
+                            "Tailored CV content",
+                            value=st.session_state[tailor_key],
+                            height=300,
+                            key=f"tailor_text_{job_id}_{i}",
+                        )
+                    else:
+                        if st.button("Tailor CV for This Job", key=f"tailor_{job_id}_{i}"):
+                            with st.spinner("Tailoring CV for this role..."):
+                                try:
+                                    from src.cv_manager import load_all_cvs
+                                    from src.config import get_config, get_credentials
+                                    import anthropic
+
+                                    cfg = get_config()
+                                    crd = get_credentials()
+                                    cv_texts_loaded = load_all_cvs(cfg, _cv_dir())
+                                    cv_text = next(iter(cv_texts_loaded.values()), "")
+
+                                    if not cv_text:
+                                        st.error("Could not extract CV text.")
+                                    else:
+                                        client = anthropic.Anthropic(api_key=crd.anthropic_api_key)
+                                        tailor_prompt = f"""You are a senior career coach. Rewrite the candidate's CV content \
+to be perfectly aligned with this specific job posting.
+
+RULES:
+- Output ONLY the rewritten text — no formatting instructions, no headers like "CV" or "Resume"
+- Keep it concise: max 1 page worth of content
+- Rewrite the Professional Summary (3-4 lines) to directly address this role
+- Rewrite the top 5-6 Experience bullets to highlight relevant achievements using metrics
+- List the most relevant Skills (10-12) for this role first
+- Add a "Why I'm a fit" section (2-3 bullet points mapping experience to job requirements)
+- Keep all facts truthful — only reframe/emphasize, never fabricate
+
+Job Title: {title}
+Company: {company}
+Job Description:
+{(description or 'No description available')[:3000]}
+
+Current CV:
+{cv_text[:4000]}
+
+Write the tailored CV content now:"""
+
+                                        response = client.messages.create(
+                                            model=cfg.matching.ai_model,
+                                            max_tokens=2000,
+                                            messages=[{"role": "user", "content": tailor_prompt}],
+                                        )
+                                        st.session_state[tailor_key] = response.content[0].text.strip()
+                                        st.rerun()
+                                except Exception as e:
+                                    st.error(f"CV tailoring failed: {e}")
+
+                else:
+                    missing = []
+                    if not api_key:
+                        missing.append("Anthropic API key")
+                    if not has_cv:
+                        missing.append("CV upload")
+                    st.caption(f"Set up {' and '.join(missing)} in Settings to generate cover letters.")
+
+
+# ─── Page: Profile Booster ───
+
+
+def render_profile_booster() -> None:
+    """Profile Booster — analyze CV gaps vs matched jobs and suggest improvements."""
+    st.header("Profile Booster")
+    st.caption(
+        "Analyzes your CV against recently matched jobs to find gaps and suggest "
+        "skills, keywords, and experience bullets to add."
+    )
+
+    # Check prerequisites
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key and _env_path().exists():
+        for line in _env_path().read_text().splitlines():
+            if line.startswith("ANTHROPIC_API_KEY="):
+                api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+
+    if not api_key:
+        st.warning("Set your ANTHROPIC_API_KEY in Settings > Credentials to use this feature.")
+        return
+
+    has_cv = any(_cv_dir().glob("*.*")) if _cv_dir().exists() else False
+    if not has_cv:
+        st.warning("Upload your CV in Settings > CV Management first.")
+        return
+
+    # Get matched jobs from DB
+    scored_jobs = get_cloud_apply_queue(min_ai_score=0.3, limit=50)
+    if not scored_jobs:
+        st.info("No scored jobs yet. Run a **Dry Run** first to discover and score jobs.")
+        return
+
+    st.metric("Scored Jobs to Analyze", len(scored_jobs))
+
+    # Show current CVs
+    from src.cv_manager import load_all_cvs
+    from src.config import get_config
+    cfg = get_config(_config_path())
+    cv_texts = load_all_cvs(cfg, _cv_dir())
+
+    if cv_texts:
+        with st.expander("Your Current CVs"):
+            for name, text in cv_texts.items():
+                st.markdown(f"**{name}** ({len(text)} chars)")
+                st.text(text[:500] + "...")
+
+    # Analyze button
+    if st.button("Analyze CV Gaps & Boost Profile", type="primary", key="boost_btn"):
+        with st.spinner("Analyzing your CV against matched jobs..."):
+            try:
+                import anthropic
+
+                # Build job summaries
+                job_summaries = []
+                for row in scored_jobs[:20]:  # top 20 jobs
+                    job = dict(row)
+                    ai_score = job.get("ai_score", 0) or 0
+                    job_summaries.append(
+                        f"- {job.get('title', '?')} at {job.get('company', '?')} "
+                        f"(AI Score: {ai_score:.1f}, CV: {job.get('selected_cv', '?')})\n"
+                        f"  Description: {(job.get('description', '') or '')[:200]}"
+                    )
+
+                # Build CV summary
+                cv_summary = ""
+                for name, text in cv_texts.items():
+                    cv_summary += f"\n--- CV: {name} ---\n{text[:2000]}\n"
+
+                prompt = f"""You are a senior career strategist. Analyze this candidate's CVs against \
+the jobs they're targeting. Identify specific gaps and provide actionable improvements.
+
+CANDIDATE'S CVs:
+{cv_summary}
+
+JOBS THEY'RE TARGETING (with AI match scores 0-1):
+{chr(10).join(job_summaries)}
+
+Provide a detailed analysis in this exact structure:
+
+## MATCH PATTERN ANALYSIS
+- What types of roles score highest (0.6+) vs lowest?
+- What's the common thread in high-scoring matches?
+
+## MISSING KEYWORDS (Top 15)
+List specific keywords/phrases that appear in job descriptions but are MISSING from the CVs.
+These are hurting keyword matching scores.
+
+## EXPERIENCE GAPS
+List 3-5 specific experience areas that would improve match rates.
+For each, suggest a bullet point the candidate could truthfully add if they have that experience.
+
+## SKILLS TO ADD
+List 10 specific skills (technical + domain) to add to the CV, prioritized by impact.
+
+## QUICK WINS (Do This Today)
+5 specific, actionable changes to make RIGHT NOW to boost match rates:
+1. [specific change with exact wording]
+2. ...
+
+## CV VERSION STRATEGY
+Which CV version to use for which job type. Should they create a new CV variant?"""
+
+                client = anthropic.Anthropic(api_key=api_key)
+                response = client.messages.create(
+                    model=cfg.matching.ai_model,
+                    max_tokens=3000,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+
+                st.session_state.boost_result = response.content[0].text.strip()
+            except Exception as e:
+                st.error(f"Analysis failed: {e}")
+
+    # Display results
+    if "boost_result" in st.session_state and st.session_state.boost_result:
+        st.divider()
+        st.markdown(st.session_state.boost_result)
+
+        # Download button
+        st.download_button(
+            "Download Analysis",
+            st.session_state.boost_result,
+            file_name="profile_boost_analysis.md",
+            mime="text/markdown",
+        )
 
 
 # ─── Page: Daily Stats ───
@@ -209,8 +612,8 @@ def render_daily_stats() -> None:
 def _load_env() -> dict[str, str]:
     """Load current .env values."""
     env: dict[str, str] = {}
-    if ENV_PATH.exists():
-        for line in ENV_PATH.read_text().splitlines():
+    if _env_path().exists():
+        for line in _env_path().read_text().splitlines():
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, _, val = line.partition("=")
@@ -223,7 +626,7 @@ def _save_env(env: dict[str, str]) -> None:
     lines = []
     for key, val in env.items():
         lines.append(f"{key}={val}")
-    ENV_PATH.write_text("\n".join(lines) + "\n")
+    _env_path().write_text("\n".join(lines) + "\n")
 
 
 def render_settings() -> None:
@@ -238,10 +641,10 @@ def render_settings() -> None:
     # ── CV Management ──
     with tab_cv:
         st.subheader("Upload CVs")
-        st.caption(f"CVs are stored in `{CV_DIR}`")
+        st.caption(f"CVs are stored in `{_cv_dir()}`")
 
-        CV_DIR.mkdir(parents=True, exist_ok=True)
-        existing_cvs = sorted(CV_DIR.glob("*.*"))
+        _cv_dir().mkdir(parents=True, exist_ok=True)
+        existing_cvs = sorted(_cv_dir().glob("*.*"))
 
         if existing_cvs:
             st.write("**Current CVs:**")
@@ -262,12 +665,11 @@ def render_settings() -> None:
         )
         if uploaded_files:
             for f in uploaded_files:
-                dest = CV_DIR / f.name
+                dest = _cv_dir() / f.name
                 dest.write_bytes(f.getvalue())
                 st.success(f"Uploaded: {f.name}")
 
-            # Update settings.yaml with new CV filenames
-            st.info("Update the CV names in **Search Preferences** or `config/settings.yaml`.")
+            st.success("CVs will be auto-detected on next run. No config needed!")
 
     # ── Credentials ──
     with tab_creds:
@@ -377,9 +779,9 @@ def render_settings() -> None:
     # ── Search Preferences ──
     with tab_search:
         st.subheader("Search Configuration")
-        st.caption(f"Saved to `{CONFIG_PATH}`")
+        st.caption(f"Saved to `{_config_path()}`")
 
-        config = load_config()
+        config = load_config(_config_path())
 
         with st.form("search_form"):
             keywords = st.text_area(
@@ -426,8 +828,8 @@ def render_settings() -> None:
 
             if st.form_submit_button("Save Search Config", type="primary"):
                 # Read existing YAML and update
-                if CONFIG_PATH.exists():
-                    with open(CONFIG_PATH) as f:
+                if _config_path().exists():
+                    with open(_config_path()) as f:
                         raw = yaml.safe_load(f) or {}
                 else:
                     raw = {}
@@ -450,7 +852,7 @@ def render_settings() -> None:
                 raw["cvs"]["directory"] = "data/cvs"
                 raw["cvs"]["versions"] = [c for c in cv_configs if c["name"]]
 
-                with open(CONFIG_PATH, "w") as f:
+                with open(_config_path(), "w") as f:
                     yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
 
                 st.success("Search config saved to settings.yaml")
@@ -459,7 +861,7 @@ def render_settings() -> None:
     with tab_portals:
         st.subheader("Portal Configuration")
 
-        config = load_config()
+        config = load_config(_config_path())
 
         with st.form("portal_form"):
             portal_settings = {}
@@ -477,18 +879,58 @@ def render_settings() -> None:
                 portal_settings[portal] = {"enabled": enabled, "auto_apply": auto}
 
             if st.form_submit_button("Save Portal Config", type="primary"):
-                if CONFIG_PATH.exists():
-                    with open(CONFIG_PATH) as f:
+                if _config_path().exists():
+                    with open(_config_path()) as f:
                         raw = yaml.safe_load(f) or {}
                 else:
                     raw = {}
 
                 raw["portals"] = portal_settings
 
-                with open(CONFIG_PATH, "w") as f:
+                with open(_config_path(), "w") as f:
                     yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
 
                 st.success("Portal config saved to settings.yaml")
+
+    # ── Multi-User Setup (only in single-user mode) ──
+    if not is_multi_user_enabled():
+        st.divider()
+        st.subheader("Enable Multi-User Mode")
+        st.caption(
+            "Share this dashboard with up to 10 people. Each user gets isolated "
+            "data (CVs, jobs, settings). You'll be the admin."
+        )
+
+        with st.form("enable_multiuser"):
+            col1, col2 = st.columns(2)
+            with col1:
+                admin_name = st.text_input("Your Name", key="mu_name")
+                admin_email = st.text_input("Your Email", key="mu_email")
+            with col2:
+                admin_pass = st.text_input("Set Password", type="password", key="mu_pass")
+                admin_pass2 = st.text_input("Confirm Password", type="password", key="mu_pass2")
+
+            if st.form_submit_button("Enable Multi-User & Create Admin Account"):
+                if not admin_name or not admin_email or not admin_pass:
+                    st.error("All fields are required.")
+                elif admin_pass != admin_pass2:
+                    st.error("Passwords don't match.")
+                elif len(admin_pass) < 4:
+                    st.error("Password must be at least 4 characters.")
+                else:
+                    success, msg = add_user(admin_name, admin_email, admin_pass, is_admin=True)
+                    if success:
+                        st.success(
+                            f"Multi-user mode enabled! {msg}\n\n"
+                            "The page will now require login. Use your email and password."
+                        )
+                        st.balloons()
+                        # Clear session so login page appears
+                        st.session_state.clear()
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        st.error(msg)
 
 
 # ─── Page: Run ───
@@ -507,9 +949,27 @@ def render_run_page() -> None:
 
     if not _has_playwright:
         st.info(
-            "**Dry Run** and **Scrape Only** work here (uses HTTP, no browser needed). "
+            "**Dry Run** and **Scrape Only** work here (uses HTTP + APIs, no browser needed). "
             "**Real Apply** requires Playwright — install locally with: "
-            "`pip install playwright && playwright install chromium`"
+            "`pip install playwright && playwright install chromium`\n\n"
+            "Use the **Cloud Apply Assistant** page to apply manually with AI-generated cover letters."
+        )
+
+    # Check for missing CV
+    _has_cvs = any(_cv_dir().glob("*.*")) if _cv_dir().exists() else False
+    if not _has_cvs:
+        st.warning(
+            "**No CVs uploaded!** Job matching needs your CV to score jobs.\n\n"
+            "Go to **Settings > CV Management** to upload your CV (PDF or DOCX). "
+            "Without a CV, jobs will be discovered but **0 will be matched**."
+        )
+
+    # Check for Anthropic key
+    _env = _load_env()
+    if not _env.get("ANTHROPIC_API_KEY") and not os.environ.get("ANTHROPIC_API_KEY"):
+        st.warning(
+            "**No Anthropic API key set!** AI matching and cover letter generation won't work.\n\n"
+            "Go to **Settings > Credentials** to add your key."
         )
 
     # Initialize session state
@@ -535,11 +995,14 @@ def render_run_page() -> None:
                 disabled=is_running,
             )
             portals = st.multiselect(
-                "Portals",
+                "Portals (direct scrape)",
                 PORTAL_NAMES,
-                default=PORTAL_NAMES,
+                default=["linkedin"],  # only LinkedIn works via HTTP; others need browser
                 key="run_portals",
                 disabled=is_running,
+                help="JSearch API already covers Indeed, Glassdoor, ZipRecruiter. "
+                     "LinkedIn is the only portal that works via direct scraping on cloud. "
+                     "Others (Naukri, Indeed, Foundit, etc.) require a browser.",
             )
         with col2:
             limit = st.number_input(
@@ -716,8 +1179,8 @@ def render_linkedin_optimizer() -> None:
 
     # Check for API key
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key and ENV_PATH.exists():
-        for line in ENV_PATH.read_text().splitlines():
+    if not api_key and _env_path().exists():
+        for line in _env_path().read_text().splitlines():
             if line.startswith("ANTHROPIC_API_KEY="):
                 api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
                 break
@@ -892,23 +1355,145 @@ def _render_optimizer_results(data: dict) -> None:
             st.success(f"**Rewrite:** {cta['rewrite']}")
 
 
+# ─── Page: User Management (admin only) ───
+
+
+def render_user_management() -> None:
+    """User Management — admin can add/remove users (max 10)."""
+    st.header("User Management")
+
+    if not st.session_state.get("user_is_admin"):
+        st.error("Admin access required.")
+        return
+
+    users = load_users()
+
+    # ── Current Users ──
+    st.subheader(f"Current Users ({len(users)}/10)")
+
+    if users:
+        for i, user in enumerate(users):
+            with st.container(border=True):
+                col1, col2, col3, col4 = st.columns([2, 3, 1, 1])
+                col1.write(f"**{user.get('name', '?')}**")
+                col2.write(user.get("email", "?"))
+                col3.write("Admin" if user.get("is_admin") else "User")
+                # Don't allow deleting yourself
+                if user.get("email") != st.session_state.get("user_email"):
+                    if col4.button("Remove", key=f"rm_user_{i}"):
+                        success, msg = remove_user(user["email"])
+                        if success:
+                            st.success(msg)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+                else:
+                    col4.write("(you)")
+    else:
+        st.info("No users configured.")
+
+    # ── Add New User ──
+    st.divider()
+    st.subheader("Add New User")
+
+    if len(users) >= 10:
+        st.warning("Maximum 10 users reached. Remove a user to add a new one.")
+        return
+
+    with st.form("add_user_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            new_name = st.text_input("Full Name", key="new_user_name")
+            new_email = st.text_input("Email", key="new_user_email")
+        with col2:
+            new_password = st.text_input("Password", type="password", key="new_user_pass")
+            new_is_admin = st.checkbox("Admin privileges", key="new_user_admin")
+
+        if st.form_submit_button("Add User", type="primary"):
+            if not new_name or not new_email or not new_password:
+                st.error("All fields are required.")
+            elif len(new_password) < 4:
+                st.error("Password must be at least 4 characters.")
+            else:
+                success, msg = add_user(new_name, new_email, new_password, new_is_admin)
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+    # ── Setup Instructions ──
+    st.divider()
+    st.subheader("How It Works")
+    st.markdown("""
+Each user gets **completely isolated data**:
+- Their own CV uploads
+- Their own job database (discovered jobs, matches, applications)
+- Their own search settings and keywords
+- Their own API credentials
+
+**To enable multi-user mode for the first time:**
+1. Add yourself as the first admin user above
+2. Share the dashboard URL with your friends
+3. Each person logs in with their email/password
+4. Each person uploads their own CV and sets their own keywords in Settings
+
+**Data is NOT shared between users** — each person's job search is independent.
+""")
+
+
 # ─── Main ───
 
 
 def main() -> None:
-    st.set_page_config(page_title="Auto-Apply Dashboard", page_icon="📋", layout="wide")
-    init_db()
+    multi_user = is_multi_user_enabled()
 
+    # ── Multi-user: require login ──
+    if multi_user:
+        if not st.session_state.get("authenticated"):
+            render_login()
+            return
+        # Setup user-specific paths/DB on each rerun
+        _setup_user_session(st.session_state.user_id)
+    else:
+        # Single-user: original behavior (no login)
+        st.set_page_config(page_title="Auto-Apply Dashboard", page_icon="📋", layout="wide")
+        _setup_default_session()
+
+    # ── Authenticated (or single-user) — render dashboard ──
+    if multi_user:
+        st.set_page_config(page_title="Auto-Apply Dashboard", page_icon="📋", layout="wide")
+
+    # Sidebar
     st.sidebar.title("Auto-Apply CV Jobs")
-    page = st.sidebar.radio("Navigation", [
+
+    if multi_user:
+        user_name = st.session_state.get("user_name", "User")
+        st.sidebar.markdown(f"**Logged in as:** {user_name}")
+        if st.sidebar.button("Logout"):
+            for key in ["authenticated", "user_id", "user_name", "user_email", "user_is_admin"]:
+                st.session_state.pop(key, None)
+            from src.db import set_db_path
+            set_db_path(None)
+            st.rerun()
+        st.sidebar.divider()
+
+    nav_items = [
         "Run",
         "Jobs Feed",
+        "Cloud Apply Assistant",
+        "Profile Booster",
         "Applications",
-        "Manual Apply Queue",
         "Daily Stats",
         "LinkedIn Optimizer",
         "Settings",
-    ])
+    ]
+
+    # Admin-only: User Management
+    if multi_user and st.session_state.get("user_is_admin"):
+        nav_items.append("User Management")
+
+    page = st.sidebar.radio("Navigation", nav_items)
 
     if page == "Run":
         render_run_page()
@@ -916,14 +1501,18 @@ def main() -> None:
         render_jobs_feed()
     elif page == "Applications":
         render_applications()
-    elif page == "Manual Apply Queue":
+    elif page == "Cloud Apply Assistant":
         render_manual_queue()
+    elif page == "Profile Booster":
+        render_profile_booster()
     elif page == "Daily Stats":
         render_daily_stats()
     elif page == "LinkedIn Optimizer":
         render_linkedin_optimizer()
     elif page == "Settings":
         render_settings()
+    elif page == "User Management":
+        render_user_management()
 
 
 if __name__ == "__main__":

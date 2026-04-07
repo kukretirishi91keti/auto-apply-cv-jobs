@@ -16,9 +16,13 @@ env/
 # Data
 data/cvs/*.pdf
 data/cvs/*.docx
+data/users/
 data/screenshots/*.png
 *.db
 *.log
+
+# User credentials (password hashes)
+config/users.yaml
 
 # Browser state
 browser_state/
