@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -210,7 +211,8 @@ async def run_pipeline(
     init_db()
 
     # Load CVs
-    cv_texts = load_all_cvs(config)
+    cv_dir_override = getattr(config, "_cv_dir_override", None)
+    cv_texts = load_all_cvs(config, cv_dir_override=cv_dir_override)
     if not cv_texts:
         logger.warning("No CVs loaded — check config/settings.yaml and data/cvs/")
 
@@ -299,8 +301,23 @@ def run_once(
     limit: int | None = None,
 ) -> None:
     """One-shot run."""
-    config = get_config()
-    creds = get_credentials()
+    # Support user-specific paths via environment variables (set by dashboard)
+    env_path = os.environ.get("AUTO_APPLY_ENV_PATH")
+    config_path = os.environ.get("AUTO_APPLY_CONFIG_PATH")
+    db_path_env = os.environ.get("AUTO_APPLY_DB_PATH")
+    cv_dir_env = os.environ.get("AUTO_APPLY_CV_DIR")
+
+    config = get_config(Path(config_path) if config_path else None)
+    creds = get_credentials(Path(env_path) if env_path else None)
+
+    if db_path_env:
+        from src.db import set_db_path
+        set_db_path(Path(db_path_env))
+
+    # Store cv_dir override for downstream use
+    if cv_dir_env:
+        config._cv_dir_override = Path(cv_dir_env)
+
     asyncio.run(run_pipeline(config, creds, portals, dry_run, scrape_only, limit))
 
 

@@ -1058,6 +1058,14 @@ def render_run_page() -> None:
         st.session_state.run_status = "running"
 
         try:
+            # Pass user-specific paths via env vars for multi-user support
+            run_env = os.environ.copy()
+            paths = _get_paths()
+            run_env["AUTO_APPLY_ENV_PATH"] = str(paths["env_path"])
+            run_env["AUTO_APPLY_CONFIG_PATH"] = str(paths["config_path"])
+            run_env["AUTO_APPLY_DB_PATH"] = str(paths["db_path"])
+            run_env["AUTO_APPLY_CV_DIR"] = str(paths["cv_dir"])
+
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -1065,6 +1073,7 @@ def render_run_page() -> None:
                 text=True,
                 bufsize=1,
                 cwd=str(PROJECT_ROOT),
+                env=run_env,
             )
             st.session_state.run_process = process
         except Exception as e:
