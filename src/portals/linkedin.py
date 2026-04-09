@@ -59,53 +59,70 @@ class LinkedInPortal(BasePortal):
         return True
 
     async def search_jobs(self) -> list[JobListing]:
-        """Search LinkedIn per keyword via public guest page — no login needed."""
+        """Search LinkedIn per keyword + location via public guest page."""
         all_jobs: list[JobListing] = []
         seen_ids: set[str] = set()
 
-        terms = self.get_search_terms(max_terms=8)
+        terms = self.get_search_terms(max_terms=10)
         if not terms:
             terms = ["jobs"]
 
-        for keyword in terms:
-            try:
-                jobs = await self._search_keyword(keyword)
-                for job in jobs:
-                    if job.external_id not in seen_ids:
-                        seen_ids.add(job.external_id)
-                        all_jobs.append(job)
-            except Exception as e:
-                self.logger.warning("LinkedIn search failed for '%s': %s", keyword, e)
+        # Search across all configured locations (not just the first)
+        locations = self.config.search.locations or [""]
 
-        self.logger.info("LinkedIn total: %d unique jobs from %d terms", len(all_jobs), len(terms))
+        for keyword in terms:
+            for location in locations:
+                try:
+                    jobs = await self._search_keyword(keyword, location)
+                    for job in jobs:
+                        if job.external_id not in seen_ids:
+                            seen_ids.add(job.external_id)
+                            all_jobs.append(job)
+                except Exception as e:
+                    self.logger.warning("LinkedIn search failed for '%s' in '%s': %s", keyword, location, e)
+
+        self.logger.info("LinkedIn total: %d unique jobs from %d terms × %d locations", len(all_jobs), len(terms), len(locations))
         return all_jobs
 
-    async def _search_keyword(self, keyword: str) -> list[JobListing]:
-        """Search for a single keyword via LinkedIn guest page."""
+    async def _search_keyword(self, keyword: str, location: str = "") -> list[JobListing]:
+        """Search for a single keyword+location via LinkedIn guest page with pagination."""
         jobs: list[JobListing] = []
-        location = self.config.search.locations[0] if self.config.search.locations else ""
-
-        params = {
-            "keywords": keyword,
-            "location": location,
-            "trk": "public_jobs_jobs-search-bar_search-submit",
-            "position": 1,
-            "pageNum": 0,
-        }
 
         async with httpx.AsyncClient(headers=HEADERS, timeout=30, follow_redirects=True) as client:
-            resp = await client.get(f"{self.BASE_URL}/jobs/search/", params=params)
-            if resp.status_code >= 400:
-                self.logger.debug("LinkedIn returned %d for '%s'", resp.status_code, keyword)
-                return jobs
+            # Fetch up to 3 pages (0, 1, 2) = ~75 results per keyword+location
+            for page_num in range(3):
+                params = {
+                    "keywords": keyword,
+                    "location": location,
+                    "trk": "public_jobs_jobs-search-bar_search-submit",
+                    "position": 1,
+                    "pageNum": page_num,
+                }
 
-        soup = BeautifulSoup(resp.text, "html.parser")
+                resp = await client.get(f"{self.BASE_URL}/jobs/search/", params=params)
+                if resp.status_code >= 400:
+                    self.logger.debug("LinkedIn returned %d for '%s' page %d", resp.status_code, keyword, page_num)
+                    break
 
-        # LinkedIn guest pages use base-card or job-search-card
-        cards = soup.select("div.base-card, li.result-card, div.job-search-card")
-        self.logger.debug("LinkedIn found %d cards for '%s'", len(cards), keyword)
+                soup = BeautifulSoup(resp.text, "html.parser")
+                cards = soup.select("div.base-card, li.result-card, div.job-search-card")
 
-        for card in cards[:15]:
+                if not cards:
+                    break  # no more results
+
+                page_jobs = self._parse_cards(cards)
+                jobs.extend(page_jobs)
+
+                if len(cards) < 10:
+                    break  # last page (fewer results than expected)
+
+        self.logger.info("LinkedIn found %d jobs for '%s' in '%s'", len(jobs), keyword, location)
+        return jobs
+
+    def _parse_cards(self, cards: list) -> list[JobListing]:
+        """Parse LinkedIn job cards into JobListing objects."""
+        jobs: list[JobListing] = []
+        for card in cards:
             try:
                 title_el = card.select_one("h3.base-search-card__title, h3.result-card__title")
                 company_el = card.select_one("h4.base-search-card__subtitle, h4.result-card__subtitle")

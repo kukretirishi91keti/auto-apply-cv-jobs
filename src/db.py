@@ -126,8 +126,12 @@ def insert_job(
     url: str = "",
     description: str = "",
     salary: str = "",
-) -> int | None:
-    """Insert a job, returns job ID or None if duplicate."""
+) -> tuple[int | None, bool]:
+    """Insert a job, returns (job_id, is_new).
+
+    If the job already exists, returns (existing_id, False) so callers
+    can re-score unscored jobs from previous runs.
+    """
     with get_connection() as conn:
         try:
             cursor = conn.execute(
@@ -135,9 +139,21 @@ def insert_job(
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (portal, external_id, title, company, location, url, description, salary),
             )
-            return cursor.lastrowid
+            return cursor.lastrowid, True
         except sqlite3.IntegrityError:
-            return None
+            # Return existing job ID so caller can re-score if needed
+            row = conn.execute(
+                "SELECT id FROM jobs WHERE portal = ? AND external_id = ?",
+                (portal, external_id),
+            ).fetchone()
+            return (row[0] if row else None), False
+
+
+def is_job_scored(job_id: int) -> bool:
+    """Check if a job has already been AI-scored."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT ai_score FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        return row is not None and row[0] is not None
 
 
 def update_job_scores(job_id: int, keyword_score: float | None = None, ai_score: float | None = None, selected_cv: str | None = None) -> None:

@@ -15,6 +15,7 @@ from src.cover_letter import generate_cover_letter
 from src.db import (
     init_db,
     insert_job,
+    is_job_scored,
     update_job_scores,
     insert_application,
     is_already_applied,
@@ -126,15 +127,22 @@ async def process_portal(
                 logger.debug("Already applied: %s at %s", job.title, job.company)
                 continue
 
-            # Insert job into DB
-            job_id = insert_job(
+            # Insert job into DB (or get existing ID)
+            job_id, is_new = insert_job(
                 portal=job.portal, external_id=job.external_id,
                 title=job.title, company=job.company,
                 location=job.location, url=job.url,
                 description=job.description, salary=job.salary,
             )
             if job_id is None:
-                continue  # duplicate
+                continue
+
+            # Skip if already scored from a previous run
+            if not is_new and is_job_scored(job_id):
+                continue
+
+            if not is_new:
+                logger.info("Re-scoring previously unscored job: %s at %s", job.title, job.company)
 
             # Match
             result = match_job(job.title, job.description, cv_texts, config, creds)
@@ -234,29 +242,43 @@ async def run_pipeline(
                     terms.append(term)
         terms = terms[:10]
 
-        location = config.search.locations[0] if config.search.locations else ""
-        logger.info("=== Aggregator API search: %d terms, location=%s ===", len(terms), location)
+        locations = config.search.locations or [""]
+        logger.info("=== Aggregator API search: %d terms, %d locations ===", len(terms), len(locations))
 
-        agg_jobs = await aggregator_search(
-            terms=terms,
-            location=location,
-            rapidapi_key=creds.rapidapi_key,
-            adzuna_app_id=creds.adzuna_app_id,
-            adzuna_app_key=creds.adzuna_app_key,
-        )
+        # Search across all configured locations
+        all_agg_jobs: list = []
+        seen_agg: set[str] = set()
+        for location in locations:
+            loc_jobs = await aggregator_search(
+                terms=terms,
+                location=location,
+                rapidapi_key=creds.rapidapi_key,
+                adzuna_app_id=creds.adzuna_app_id,
+                adzuna_app_key=creds.adzuna_app_key,
+            )
+            for j in loc_jobs:
+                key = f"{j.portal}:{j.external_id}"
+                if key not in seen_agg:
+                    seen_agg.add(key)
+                    all_agg_jobs.append(j)
+        agg_jobs = all_agg_jobs
 
         # Process aggregator results like portal results
         agg_stats = {"discovered": len(agg_jobs), "matched": 0, "applied": 0, "failed": 0}
         logger.info("[aggregator] Discovered %d jobs via APIs", len(agg_jobs))
 
         for job in agg_jobs:
-            job_id = insert_job(
+            job_id, is_new = insert_job(
                 portal=job.portal, external_id=job.external_id,
                 title=job.title, company=job.company,
                 location=job.location, url=job.url,
                 description=job.description, salary=job.salary,
             )
             if job_id is None:
+                continue
+
+            # Skip if already scored from a previous run
+            if not is_new and is_job_scored(job_id):
                 continue
 
             if scrape_only:
