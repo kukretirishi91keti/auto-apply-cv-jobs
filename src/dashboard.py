@@ -101,6 +101,7 @@ def _setup_user_session(user_id: str) -> None:
     set_db_path(paths["db_path"])
     paths["cv_dir"].mkdir(parents=True, exist_ok=True)
     ensure_user_config(user_id)
+    _restore_secrets_to_env()
     init_db(paths["db_path"])
 
     # Load user-specific .env into os.environ so credentials are available
@@ -116,11 +117,50 @@ def _setup_user_session(user_id: str) -> None:
                     os.environ[key] = val
 
 
+def _restore_secrets_to_env() -> None:
+    """Load Streamlit Cloud secrets into .env so credentials survive reboots.
+
+    On Streamlit Cloud, the filesystem is ephemeral — .env files written at
+    runtime are lost on every reboot. But st.secrets (set via the dashboard's
+    Secrets UI) persists. This copies them into .env + os.environ on startup.
+    """
+    try:
+        secrets = dict(st.secrets)
+    except Exception:
+        return
+
+    if not secrets:
+        return
+
+    env_path = _env_path()
+    existing_env: dict[str, str] = {}
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, _, val = line.partition("=")
+                existing_env[key.strip()] = val.strip()
+
+    merged = {**existing_env}
+    for key, val in secrets.items():
+        if isinstance(val, str) and val:
+            merged[key] = val
+            os.environ[key] = val
+
+    if merged != existing_env:
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [f"{k}={v}" for k, v in merged.items()]
+        env_path.write_text("\n".join(lines) + "\n")
+        root_env = PROJECT_ROOT / ".env"
+        root_env.write_text("\n".join(lines) + "\n")
+
+
 def _setup_default_session() -> None:
     """Configure session for single-user mode (default paths)."""
     from src.db import set_db_path
     set_db_path(None)  # use default DB_PATH
     _DEFAULT_CV_DIR.mkdir(parents=True, exist_ok=True)
+    _restore_secrets_to_env()
     init_db()
 
 
@@ -897,6 +937,12 @@ def render_settings() -> None:
     with tab_cv:
         st.subheader("Upload CVs")
         st.caption(f"CVs are stored in `{_cv_dir()}`")
+        st.info(
+            "**Streamlit Cloud users:** Uploaded CVs are lost on app reboot. "
+            "To make them permanent, commit your CV files to `data/cvs/` in your "
+            "GitHub repo (remove the `data/cvs/*.pdf` line from `.gitignore` first). "
+            "They'll be available automatically on every deploy."
+        )
 
         _cv_dir().mkdir(parents=True, exist_ok=True)
         existing_cvs = sorted(_cv_dir().glob("*.*"))
@@ -930,6 +976,12 @@ def render_settings() -> None:
     with tab_creds:
         st.subheader("API & Portal Credentials")
         st.caption("Saved to `.env` file (never committed to git)")
+        st.info(
+            "**Streamlit Cloud users:** Credentials entered here are lost on reboot. "
+            "To make them permanent, go to your app's **Settings > Secrets** on Streamlit Cloud "
+            "and add them there (e.g. `ANTHROPIC_API_KEY = \"sk-...\"`).\n\n"
+            "Secrets are automatically loaded into the app on every startup."
+        )
 
         env = _load_env()
 
