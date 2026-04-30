@@ -9,6 +9,7 @@ WeWorkRemotely covers: Remote jobs across categories.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 
@@ -397,10 +398,12 @@ async def aggregator_search(
                 added += 1
         return added
 
-    for term in terms[:max_terms]:
+    for i, term in enumerate(terms[:max_terms]):
         # JSearch
         if has_jsearch:
             try:
+                if i > 0:
+                    await asyncio.sleep(1.5)
                 jobs = await jsearch_search(term, location, rapidapi_key=rapidapi_key)
                 _add_jobs(jobs)
             except Exception as e:

@@ -108,9 +108,15 @@ class LinkedInPortal(BasePortal):
                 cards = soup.select("div.base-card, li.result-card, div.job-search-card")
 
                 if not cards:
-                    break  # no more results
+                    # Try structured data fallback before giving up
+                    if page_num == 0:
+                        fallback_jobs = self._parse_structured_data(soup)
+                        jobs.extend(fallback_jobs)
+                    break
 
                 page_jobs = self._parse_cards(cards)
+                if not page_jobs and page_num == 0:
+                    page_jobs = self._parse_structured_data(soup)
                 jobs.extend(page_jobs)
 
                 if len(cards) < 10:
@@ -149,33 +155,36 @@ class LinkedInPortal(BasePortal):
             except Exception as e:
                 self.logger.debug("Error parsing LinkedIn card: %s", e)
 
-        # Fallback: try structured data
-        if not jobs:
-            import json
-            for script in soup.select('script[type="application/ld+json"]'):
-                try:
-                    ld = json.loads(script.string or "")
-                    items = []
-                    if isinstance(ld, dict) and ld.get("@type") == "ItemList":
-                        items = ld.get("itemListElement", [])
-                    for item in items:
-                        ji = item.get("item", item) if isinstance(item, dict) else item
-                        if not isinstance(ji, dict):
-                            continue
-                        title = ji.get("title", ji.get("name", "")).strip()
-                        org = ji.get("hiringOrganization", {})
-                        company = org.get("name", "Unknown") if isinstance(org, dict) else "Unknown"
-                        url = ji.get("url", "")
-                        ext_id = url.rstrip("/").split("-")[-1] if url else title[:20]
-                        if title:
-                            jobs.append(JobListing(
-                                portal=self.name, external_id=ext_id,
-                                title=title, company=company, url=url,
-                            ))
-                except (json.JSONDecodeError, TypeError):
-                    continue
+        return jobs
 
-        self.logger.info("LinkedIn found %d jobs for '%s'", len(jobs), keyword)
+    def _parse_structured_data(self, soup: BeautifulSoup) -> list[JobListing]:
+        """Fallback: extract jobs from JSON-LD structured data in the page."""
+        import json
+
+        jobs: list[JobListing] = []
+        for script in soup.select('script[type="application/ld+json"]'):
+            try:
+                ld = json.loads(script.string or "")
+                items = []
+                if isinstance(ld, dict) and ld.get("@type") == "ItemList":
+                    items = ld.get("itemListElement", [])
+                for item in items:
+                    ji = item.get("item", item) if isinstance(item, dict) else item
+                    if not isinstance(ji, dict):
+                        continue
+                    title = ji.get("title", ji.get("name", "")).strip()
+                    org = ji.get("hiringOrganization", {})
+                    company = org.get("name", "Unknown") if isinstance(org, dict) else "Unknown"
+                    url = ji.get("url", "")
+                    ext_id = url.rstrip("/").split("-")[-1] if url else title[:20]
+                    if title:
+                        jobs.append(JobListing(
+                            portal=self.name, external_id=ext_id,
+                            title=title, company=company, url=url,
+                        ))
+            except (json.JSONDecodeError, TypeError):
+                continue
+
         return jobs
 
     async def apply_to_job(self, job: JobListing, cv_path: str, cover_letter: str = "") -> bool:

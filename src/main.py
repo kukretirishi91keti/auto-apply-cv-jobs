@@ -243,12 +243,17 @@ async def run_pipeline(
         terms = terms[:10]
 
         locations = config.search.locations or [""]
-        logger.info("=== Aggregator API search: %d terms, %d locations ===", len(terms), len(locations))
+        # Limit locations for API searches to avoid rate limiting (terms × locations explosion)
+        api_locations = locations[:3]
+        logger.info("=== Aggregator API search: %d terms, %d locations (of %d configured) ===",
+                     len(terms), len(api_locations), len(locations))
 
-        # Search across all configured locations
         all_agg_jobs: list = []
         seen_agg: set[str] = set()
-        for location in locations:
+        for loc_idx, location in enumerate(api_locations):
+            if loc_idx > 0:
+                import asyncio
+                await asyncio.sleep(2)
             loc_jobs = await aggregator_search(
                 terms=terms,
                 location=location,
