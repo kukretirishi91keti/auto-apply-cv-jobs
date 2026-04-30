@@ -89,6 +89,8 @@ def init_db(db_path: Path | None = None) -> None:
 
 MIGRATIONS = [
     "ALTER TABLE applications ADD COLUMN notes TEXT DEFAULT ''",
+    "ALTER TABLE applications ADD COLUMN tailored_cv_text TEXT DEFAULT ''",
+    "ALTER TABLE applications ADD COLUMN recruiter_message TEXT DEFAULT ''",
 ]
 
 
@@ -358,7 +360,10 @@ def get_cloud_apply_queue(
             f"""SELECT j.id AS job_id, j.title, j.company, j.location, j.portal,
                        j.url, j.salary, j.description, j.keyword_score, j.ai_score,
                        j.selected_cv, j.discovered_at,
-                       a.status AS app_status
+                       a.status AS app_status,
+                       a.cover_letter AS saved_cover_letter,
+                       a.tailored_cv_text AS saved_tailored_cv,
+                       a.recruiter_message AS saved_recruiter_msg
                 FROM jobs j
                 LEFT JOIN applications a ON j.id = a.job_id
                 WHERE {where}
@@ -387,6 +392,64 @@ def mark_manually_applied(job_id: int, notes: str = "") -> None:
                 "INSERT INTO applications (job_id, portal, status, notes) VALUES (?, ?, 'manually_applied', ?)",
                 (job_id, portal[0] if portal else "unknown", notes),
             )
+
+
+def save_generated_content(
+    job_id: int,
+    cover_letter: str = "",
+    tailored_cv_text: str = "",
+    recruiter_message: str = "",
+) -> None:
+    """Save AI-generated content (cover letter, tailored CV, recruiter message) for a job."""
+    with get_connection() as conn:
+        existing = conn.execute(
+            "SELECT id FROM applications WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        if existing:
+            updates = []
+            params: list[Any] = []
+            if cover_letter:
+                updates.append("cover_letter = ?")
+                params.append(cover_letter)
+            if tailored_cv_text:
+                updates.append("tailored_cv_text = ?")
+                params.append(tailored_cv_text)
+            if recruiter_message:
+                updates.append("recruiter_message = ?")
+                params.append(recruiter_message)
+            if updates:
+                params.append(job_id)
+                conn.execute(
+                    f"UPDATE applications SET {', '.join(updates)} WHERE job_id = ?",
+                    params,
+                )
+        else:
+            portal = conn.execute(
+                "SELECT portal FROM jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            conn.execute(
+                """INSERT INTO applications
+                   (job_id, portal, status, cover_letter, tailored_cv_text, recruiter_message)
+                   VALUES (?, ?, 'pending', ?, ?, ?)""",
+                (job_id, portal[0] if portal else "unknown", cover_letter, tailored_cv_text, recruiter_message),
+            )
+
+
+def get_generated_content(job_id: int) -> dict[str, str]:
+    """Retrieve previously generated content for a job."""
+    with get_connection() as conn:
+        row = conn.execute(
+            """SELECT cover_letter, tailored_cv_text, recruiter_message
+               FROM applications WHERE job_id = ? LIMIT 1""",
+            (job_id,),
+        ).fetchone()
+        if row:
+            return {
+                "cover_letter": row[0] or "",
+                "tailored_cv_text": row[1] or "",
+                "recruiter_message": row[2] or "",
+            }
+        return {"cover_letter": "", "tailored_cv_text": "", "recruiter_message": ""}
 
 
 def get_daily_stats(days: int = 14) -> list[sqlite3.Row]:

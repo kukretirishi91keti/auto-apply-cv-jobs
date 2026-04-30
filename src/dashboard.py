@@ -21,6 +21,8 @@ from src.db import (
     get_manual_apply_queue,
     get_cloud_apply_queue,
     mark_manually_applied,
+    save_generated_content,
+    get_generated_content,
     get_daily_stats,
     get_portal_summary,
 )
@@ -234,40 +236,139 @@ def render_applications() -> None:
     st.dataframe(df[available], use_container_width=True, hide_index=True)
 
 
-# ─── Page: Manual Apply Queue ───
+# ─── Page: Cloud Apply Assistant ───
+
+
+def _get_api_key() -> str:
+    """Get Anthropic API key from env or .env file."""
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key and _env_path().exists():
+        for line in _env_path().read_text().splitlines():
+            if line.startswith("ANTHROPIC_API_KEY="):
+                api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+    return api_key
+
+
+def _load_cv_and_config():
+    """Load config, credentials, and CV texts. Cached per session."""
+    from src.cv_manager import load_all_cvs
+    from src.config import get_config, get_credentials
+    cfg = get_config(_config_path())
+    crd = get_credentials(_env_path())
+    cv_texts = load_all_cvs(cfg, _cv_dir())
+    return cfg, crd, cv_texts
+
+
+def _generate_cover_letter_for_job(title, company, description, cfg, crd, cv_texts):
+    """Generate a cover letter for a specific job."""
+    from src.cover_letter import generate_cover_letter
+    cv_text = next(iter(cv_texts.values()), "")
+    if not cv_text:
+        return ""
+    return generate_cover_letter(title, company, description or "", cv_text, cfg, crd)
+
+
+def _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_texts):
+    """Generate a tailored CV for a specific job."""
+    import anthropic
+    cv_text = next(iter(cv_texts.values()), "")
+    if not cv_text:
+        return ""
+    client = anthropic.Anthropic(api_key=crd.anthropic_api_key)
+    prompt = f"""You are a senior career coach. Rewrite the candidate's CV content \
+to be perfectly aligned with this specific job posting.
+
+RULES:
+- Output ONLY the rewritten text — no formatting instructions, no headers like "CV" or "Resume"
+- Keep it concise: max 1 page worth of content
+- Rewrite the Professional Summary (3-4 lines) to directly address this role
+- Rewrite the top 5-6 Experience bullets to highlight relevant achievements using metrics
+- List the most relevant Skills (10-12) for this role first
+- Add a "Why I'm a fit" section (2-3 bullet points mapping experience to job requirements)
+- Keep all facts truthful — only reframe/emphasize, never fabricate
+
+Job Title: {title}
+Company: {company}
+Job Description:
+{(description or 'No description available')[:3000]}
+
+Current CV:
+{cv_text[:4000]}
+
+Write the tailored CV content now:"""
+    response = client.messages.create(
+        model=cfg.matching.ai_model,
+        max_tokens=2000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.content[0].text.strip()
+
+
+def _generate_recruiter_message_for_job(title, company, description, cfg, crd, cv_texts):
+    """Generate a LinkedIn recruiter outreach message for a job."""
+    import anthropic
+    cv_text = next(iter(cv_texts.values()), "")
+    if not cv_text:
+        return ""
+    client = anthropic.Anthropic(api_key=crd.anthropic_api_key)
+    prompt = f"""Write a short LinkedIn connection request / InMail message to a recruiter or \
+hiring manager for this role. The candidate wants to express interest and stand out.
+
+RULES:
+- Max 280 characters for connection note, OR ~150 words for InMail
+- Provide BOTH versions (label them "Connection Note:" and "InMail:")
+- Be specific — mention the role, one key qualification, and a hook
+- Sound human, not AI-generated — no buzzwords like "passionate" or "leveraging"
+- End with a clear ask (chat, call, learn more)
+
+Job Title: {title}
+Company: {company}
+Job Description:
+{(description or '')[:2000]}
+
+Candidate Background:
+{cv_text[:2000]}
+
+Write both messages now:"""
+    response = client.messages.create(
+        model=cfg.matching.ai_model,
+        max_tokens=400,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.content[0].text.strip()
 
 
 def render_manual_queue() -> None:
-    """Cloud Apply Assistant — apply to matched jobs without Playwright."""
+    """Cloud Apply Assistant — streamlined for 50+ applications/day."""
     st.header("Cloud Apply Assistant")
     st.caption(
-        "Apply to jobs directly from your browser — no Playwright needed. "
-        "Click 'Apply Now' to open the job page, use the generated cover letter, and mark as applied."
+        "Generate cover letters, tailored CVs, and recruiter messages — then download as PDF and apply. "
+        "Everything is auto-saved to the database."
     )
 
     # ── Filters ──
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
     with col1:
         portal_filter = st.selectbox("Portal", PORTALS, key="caq_portal")
     with col2:
         min_score = st.slider("Min AI Score", 0.0, 1.0, 0.0, 0.1, key="caq_score")
     with col3:
         view_mode = st.radio("View", ["Best Matches", "All Jobs"], key="caq_view", horizontal=True)
+    with col4:
+        page_size = st.selectbox("Per page", [10, 25, 50], key="caq_page_size")
 
     portal_val = portal_filter if portal_filter != "All" else None
     score_val = min_score if min_score > 0 else None
 
-    # Use cloud apply queue (all portals, sorted by score)
     if view_mode == "Best Matches":
-        queue = get_cloud_apply_queue(min_ai_score=score_val, portal=portal_val)
+        queue = get_cloud_apply_queue(min_ai_score=score_val, portal=portal_val, limit=200)
     else:
-        queue = get_cloud_apply_queue(portal=portal_val)
+        queue = get_cloud_apply_queue(portal=portal_val, limit=200)
 
     # Also include legacy manual queue
     legacy_queue = get_manual_apply_queue()
-    legacy_ids = {dict(r).get("job_id") for r in legacy_queue}
     queue_ids = {dict(r).get("job_id") for r in queue}
-    # Merge legacy items not already in queue
     all_items = list(queue)
     for r in legacy_queue:
         if dict(r).get("job_id") not in queue_ids:
@@ -277,35 +378,133 @@ def render_manual_queue() -> None:
         st.info("No jobs in queue. Run a **Dry Run** first to discover and score jobs.")
         return
 
-    # ── Stats ──
+    # ── Stats bar ──
     scored = [dict(r) for r in all_items if dict(r).get("ai_score")]
     unscored = [dict(r) for r in all_items if not dict(r).get("ai_score")]
-    cols = st.columns(3)
+    cols = st.columns(4)
     cols[0].metric("Total Jobs", len(all_items))
     cols[1].metric("AI Scored", len(scored))
     cols[2].metric("Unscored", len(unscored))
+    generated_count = sum(1 for r in all_items if dict(r).get("saved_cover_letter"))
+    cols[3].metric("Generated", generated_count)
 
     if unscored and not scored:
         st.warning(
             "Jobs found but none have AI scores. To score jobs:\n"
             "1. **Upload your CV** in Settings > CV Management\n"
             "2. **Set your Anthropic API key** in Settings > Credentials\n"
-            "3. Run a **Dry Run** — jobs will be scored against your CV"
+            "3. Run a **Dry Run** -- jobs will be scored against your CV"
         )
 
-    # ── Check for cover letter capability ──
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key and _env_path().exists():
-        for line in _env_path().read_text().splitlines():
-            if line.startswith("ANTHROPIC_API_KEY="):
-                api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
-                break
+    api_key = _get_api_key()
     has_cv = any(_cv_dir().glob("*.*")) if _cv_dir().exists() else False
+
+    # ── Batch Actions ──
+    if api_key and has_cv:
+        st.divider()
+        batch_col1, batch_col2, batch_col3 = st.columns(3)
+
+        with batch_col1:
+            batch_count = st.number_input("Jobs to process", 1, min(50, len(all_items)), min(10, len(all_items)), key="batch_n")
+        with batch_col2:
+            st.write("")
+            st.write("")
+            batch_generate = st.button("Batch Generate All (CL + CV + Recruiter Msg)", type="primary", key="batch_gen")
+        with batch_col3:
+            st.write("")
+            st.write("")
+            batch_what = st.multiselect(
+                "Generate",
+                ["Cover Letter", "Tailored CV", "Recruiter Message"],
+                default=["Cover Letter", "Tailored CV"],
+                key="batch_what",
+            )
+
+        if batch_generate:
+            cfg, crd, cv_texts = _load_cv_and_config()
+            if not cv_texts:
+                st.error("No CVs found. Upload in Settings > CV Management.")
+            else:
+                progress = st.progress(0, text="Starting batch generation...")
+                items_to_process = all_items[:batch_count]
+
+                for idx, row in enumerate(items_to_process):
+                    job = dict(row)
+                    job_id = job.get("job_id")
+                    title = job.get("title", "")
+                    company = job.get("company", "")
+                    description = job.get("description", "")
+
+                    progress.progress(
+                        (idx + 1) / len(items_to_process),
+                        text=f"[{idx+1}/{len(items_to_process)}] {title} at {company}",
+                    )
+
+                    try:
+                        cl = ""
+                        tcv = ""
+                        rm = ""
+
+                        if "Cover Letter" in batch_what:
+                            existing = st.session_state.get(f"cover_letter_{job_id}")
+                            if not existing:
+                                cl = _generate_cover_letter_for_job(title, company, description, cfg, crd, cv_texts)
+                                st.session_state[f"cover_letter_{job_id}"] = cl
+                            else:
+                                cl = existing
+
+                        if "Tailored CV" in batch_what:
+                            existing = st.session_state.get(f"cv_tailor_{job_id}")
+                            if not existing:
+                                tcv = _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_texts)
+                                st.session_state[f"cv_tailor_{job_id}"] = tcv
+                            else:
+                                tcv = existing
+
+                        if "Recruiter Message" in batch_what:
+                            existing = st.session_state.get(f"recruiter_msg_{job_id}")
+                            if not existing:
+                                rm = _generate_recruiter_message_for_job(title, company, description, cfg, crd, cv_texts)
+                                st.session_state[f"recruiter_msg_{job_id}"] = rm
+                            else:
+                                rm = existing
+
+                        save_generated_content(job_id, cover_letter=cl, tailored_cv_text=tcv, recruiter_message=rm)
+
+                    except Exception as e:
+                        st.warning(f"Failed for {title}: {e}")
+
+                progress.progress(1.0, text="Batch generation complete!")
+                st.success(f"Generated content for {len(items_to_process)} jobs. Scroll down to review and download PDFs.")
+                time.sleep(1)
+                st.rerun()
 
     st.divider()
 
+    # ── Pagination ──
+    total_pages = max(1, (len(all_items) + page_size - 1) // page_size)
+    if "caq_page" not in st.session_state:
+        st.session_state.caq_page = 0
+    current_page = st.session_state.caq_page
+
+    if total_pages > 1:
+        pg_col1, pg_col2, pg_col3 = st.columns([1, 3, 1])
+        with pg_col1:
+            if st.button("Previous", disabled=current_page <= 0, key="pg_prev"):
+                st.session_state.caq_page = max(0, current_page - 1)
+                st.rerun()
+        with pg_col2:
+            st.markdown(f"**Page {current_page + 1} of {total_pages}** ({len(all_items)} jobs)")
+        with pg_col3:
+            if st.button("Next", disabled=current_page >= total_pages - 1, key="pg_next"):
+                st.session_state.caq_page = min(total_pages - 1, current_page + 1)
+                st.rerun()
+
+    start_idx = current_page * page_size
+    page_items = all_items[start_idx : start_idx + page_size]
+
     # ── Job Cards ──
-    for i, row in enumerate(all_items):
+    for i, row in enumerate(page_items):
         job = dict(row)
         job_id = job.get("job_id")
         title = job.get("title", "Unknown")
@@ -318,9 +517,17 @@ def render_manual_queue() -> None:
         kw_score = job.get("keyword_score")
         description = job.get("description", "")
 
+        # Load saved content from DB or session
+        saved_cl = job.get("saved_cover_letter") or st.session_state.get(f"cover_letter_{job_id}", "")
+        saved_cv = job.get("saved_tailored_cv") or st.session_state.get(f"cv_tailor_{job_id}", "")
+        saved_rm = job.get("saved_recruiter_msg") or st.session_state.get(f"recruiter_msg_{job_id}", "")
+
+        has_generated = bool(saved_cl or saved_cv or saved_rm)
+        card_idx = start_idx + i
+
         with st.container(border=True):
             # ── Header row ──
-            header_col, score_col, action_col = st.columns([3, 1, 1])
+            header_col, score_col, action_col = st.columns([3, 1, 2])
 
             with header_col:
                 if url:
@@ -342,119 +549,143 @@ def render_manual_queue() -> None:
                     st.caption(f"KW: {int(kw_score * 100)}%")
 
             with action_col:
-                if url:
-                    st.link_button("Apply Now", url, type="primary")
-                if st.button("Mark Applied", key=f"mark_{job_id}_{i}"):
-                    mark_manually_applied(job_id)
-                    st.rerun()
+                btn_c1, btn_c2 = st.columns(2)
+                with btn_c1:
+                    if url:
+                        st.link_button("Apply Now", url, type="primary")
+                with btn_c2:
+                    if st.button("Mark Applied", key=f"mark_{job_id}_{card_idx}"):
+                        mark_manually_applied(job_id)
+                        st.success("Marked as applied!")
+                        time.sleep(0.5)
+                        st.rerun()
 
-            # ── Expandable details ──
-            with st.expander("Details & Cover Letter"):
-                if description:
-                    st.markdown("**Job Description:**")
+            # ── Quick action row: Generate + Download ──
+            if api_key and has_cv:
+                qa_col1, qa_col2, qa_col3, qa_col4 = st.columns(4)
+
+                with qa_col1:
+                    if not saved_cl:
+                        if st.button("Gen Cover Letter", key=f"gen_cl_{job_id}_{card_idx}"):
+                            with st.spinner("Generating..."):
+                                try:
+                                    cfg, crd, cv_texts = _load_cv_and_config()
+                                    cl = _generate_cover_letter_for_job(title, company, description, cfg, crd, cv_texts)
+                                    st.session_state[f"cover_letter_{job_id}"] = cl
+                                    save_generated_content(job_id, cover_letter=cl)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Failed: {e}")
+                    else:
+                        from src.pdf_generator import generate_cover_letter_pdf
+                        user_name = st.session_state.get("user_name", "")
+                        pdf = generate_cover_letter_pdf(saved_cl, title, company, user_name)
+                        st.download_button(
+                            "Download CL PDF",
+                            pdf,
+                            file_name=f"CoverLetter_{company.replace(' ', '_')}.pdf",
+                            mime="application/pdf",
+                            key=f"dl_cl_{job_id}_{card_idx}",
+                        )
+
+                with qa_col2:
+                    if not saved_cv:
+                        if st.button("Gen Tailored CV", key=f"gen_cv_{job_id}_{card_idx}"):
+                            with st.spinner("Tailoring CV..."):
+                                try:
+                                    cfg, crd, cv_texts = _load_cv_and_config()
+                                    tcv = _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_texts)
+                                    st.session_state[f"cv_tailor_{job_id}"] = tcv
+                                    save_generated_content(job_id, tailored_cv_text=tcv)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Failed: {e}")
+                    else:
+                        from src.pdf_generator import generate_tailored_cv_pdf
+                        user_name = st.session_state.get("user_name", "")
+                        pdf = generate_tailored_cv_pdf(saved_cv, user_name)
+                        st.download_button(
+                            "Download CV PDF",
+                            pdf,
+                            file_name=f"CV_{company.replace(' ', '_')}.pdf",
+                            mime="application/pdf",
+                            key=f"dl_cv_{job_id}_{card_idx}",
+                        )
+
+                with qa_col3:
+                    if not saved_rm:
+                        if st.button("Gen Recruiter Msg", key=f"gen_rm_{job_id}_{card_idx}"):
+                            with st.spinner("Generating..."):
+                                try:
+                                    cfg, crd, cv_texts = _load_cv_and_config()
+                                    rm = _generate_recruiter_message_for_job(title, company, description, cfg, crd, cv_texts)
+                                    st.session_state[f"recruiter_msg_{job_id}"] = rm
+                                    save_generated_content(job_id, recruiter_message=rm)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Failed: {e}")
+                    else:
+                        st.caption("Recruiter msg ready")
+
+                with qa_col4:
+                    if has_generated and not saved_cl and not saved_cv:
+                        pass  # nothing to generate all-in-one for
+                    elif not has_generated:
+                        if st.button("Gen All", key=f"gen_all_{job_id}_{card_idx}", type="secondary"):
+                            with st.spinner("Generating CL + CV + Recruiter Msg..."):
+                                try:
+                                    cfg, crd, cv_texts = _load_cv_and_config()
+                                    cl = _generate_cover_letter_for_job(title, company, description, cfg, crd, cv_texts)
+                                    tcv = _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_texts)
+                                    rm = _generate_recruiter_message_for_job(title, company, description, cfg, crd, cv_texts)
+                                    st.session_state[f"cover_letter_{job_id}"] = cl
+                                    st.session_state[f"cv_tailor_{job_id}"] = tcv
+                                    st.session_state[f"recruiter_msg_{job_id}"] = rm
+                                    save_generated_content(job_id, cover_letter=cl, tailored_cv_text=tcv, recruiter_message=rm)
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Failed: {e}")
+
+            # ── Expandable: view generated content ──
+            if has_generated:
+                with st.expander("View Generated Content"):
+                    tab_cl, tab_cv, tab_rm, tab_desc = st.tabs(["Cover Letter", "Tailored CV", "Recruiter Message", "Job Description"])
+
+                    with tab_cl:
+                        if saved_cl:
+                            st.text_area("Cover Letter", value=saved_cl, height=200, key=f"view_cl_{job_id}_{card_idx}")
+                        else:
+                            st.caption("Not generated yet.")
+
+                    with tab_cv:
+                        if saved_cv:
+                            st.text_area("Tailored CV", value=saved_cv, height=300, key=f"view_cv_{job_id}_{card_idx}")
+                        else:
+                            st.caption("Not generated yet.")
+
+                    with tab_rm:
+                        if saved_rm:
+                            st.text_area("Recruiter Message", value=saved_rm, height=150, key=f"view_rm_{job_id}_{card_idx}")
+                        else:
+                            st.caption("Not generated yet.")
+
+                    with tab_desc:
+                        if description:
+                            st.text(description[:1000] + ("..." if len(description) > 1000 else ""))
+                        else:
+                            st.caption("No description available.")
+
+            elif description:
+                with st.expander("Job Description"):
                     st.text(description[:500] + ("..." if len(description) > 500 else ""))
 
-                # Cover letter generation
-                if api_key and has_cv:
-                    cl_key = f"cover_letter_{job_id}"
-                    if cl_key in st.session_state:
-                        st.markdown("**Generated Cover Letter:**")
-                        st.text_area(
-                            "Copy this cover letter",
-                            value=st.session_state[cl_key],
-                            height=200,
-                            key=f"cl_text_{job_id}_{i}",
-                        )
-                    else:
-                        if st.button("Generate Cover Letter", key=f"gen_cl_{job_id}_{i}"):
-                            with st.spinner("Generating cover letter..."):
-                                try:
-                                    from src.cover_letter import generate_cover_letter
-                                    from src.cv_manager import load_all_cvs
-                                    from src.config import get_config, get_credentials
-
-                                    cfg = get_config(_config_path())
-                                    crd = get_credentials(_env_path())
-                                    cv_texts = load_all_cvs(cfg, _cv_dir())
-                                    cv_text = next(iter(cv_texts.values()), "") if cv_texts else ""
-
-                                    if not cv_text:
-                                        st.error("Could not extract text from CV. Check Settings > CV Management.")
-                                    else:
-                                        letter = generate_cover_letter(
-                                            title, company, description or "", cv_text, cfg, crd,
-                                        )
-                                        st.session_state[cl_key] = letter
-                                        st.rerun()
-                                except Exception as e:
-                                    st.error(f"Cover letter generation failed: {e}")
-                    # CV Tailor — rewrite CV highlights for this specific job
-                    st.divider()
-                    tailor_key = f"cv_tailor_{job_id}"
-                    if tailor_key in st.session_state:
-                        st.markdown("**Tailored CV Highlights (copy to update your CV):**")
-                        st.text_area(
-                            "Tailored CV content",
-                            value=st.session_state[tailor_key],
-                            height=300,
-                            key=f"tailor_text_{job_id}_{i}",
-                        )
-                    else:
-                        if st.button("Tailor CV for This Job", key=f"tailor_{job_id}_{i}"):
-                            with st.spinner("Tailoring CV for this role..."):
-                                try:
-                                    from src.cv_manager import load_all_cvs
-                                    from src.config import get_config, get_credentials
-                                    import anthropic
-
-                                    cfg = get_config()
-                                    crd = get_credentials()
-                                    cv_texts_loaded = load_all_cvs(cfg, _cv_dir())
-                                    cv_text = next(iter(cv_texts_loaded.values()), "")
-
-                                    if not cv_text:
-                                        st.error("Could not extract CV text.")
-                                    else:
-                                        client = anthropic.Anthropic(api_key=crd.anthropic_api_key)
-                                        tailor_prompt = f"""You are a senior career coach. Rewrite the candidate's CV content \
-to be perfectly aligned with this specific job posting.
-
-RULES:
-- Output ONLY the rewritten text — no formatting instructions, no headers like "CV" or "Resume"
-- Keep it concise: max 1 page worth of content
-- Rewrite the Professional Summary (3-4 lines) to directly address this role
-- Rewrite the top 5-6 Experience bullets to highlight relevant achievements using metrics
-- List the most relevant Skills (10-12) for this role first
-- Add a "Why I'm a fit" section (2-3 bullet points mapping experience to job requirements)
-- Keep all facts truthful — only reframe/emphasize, never fabricate
-
-Job Title: {title}
-Company: {company}
-Job Description:
-{(description or 'No description available')[:3000]}
-
-Current CV:
-{cv_text[:4000]}
-
-Write the tailored CV content now:"""
-
-                                        response = client.messages.create(
-                                            model=cfg.matching.ai_model,
-                                            max_tokens=2000,
-                                            messages=[{"role": "user", "content": tailor_prompt}],
-                                        )
-                                        st.session_state[tailor_key] = response.content[0].text.strip()
-                                        st.rerun()
-                                except Exception as e:
-                                    st.error(f"CV tailoring failed: {e}")
-
-                else:
-                    missing = []
-                    if not api_key:
-                        missing.append("Anthropic API key")
-                    if not has_cv:
-                        missing.append("CV upload")
-                    st.caption(f"Set up {' and '.join(missing)} in Settings to generate cover letters.")
+            if not api_key or not has_cv:
+                missing = []
+                if not api_key:
+                    missing.append("Anthropic API key")
+                if not has_cv:
+                    missing.append("CV upload")
+                st.caption(f"Set up {' and '.join(missing)} in Settings to generate content.")
 
 
 # ─── Page: Profile Booster ───

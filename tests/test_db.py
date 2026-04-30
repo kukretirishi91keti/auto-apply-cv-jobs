@@ -42,7 +42,7 @@ def test_init_db():
 def test_insert_job():
     path, original = setup_test_db()
     try:
-        job_id = db.insert_job(
+        job_id, is_new = db.insert_job(
             portal="naukri",
             external_id="123",
             title="Software Engineer",
@@ -51,16 +51,19 @@ def test_insert_job():
         )
         assert job_id is not None
         assert job_id > 0
+        assert is_new is True
     finally:
         teardown_test_db(path, original)
 
 
-def test_duplicate_job_returns_none():
+def test_duplicate_job_returns_existing():
     path, original = setup_test_db()
     try:
-        db.insert_job(portal="naukri", external_id="456", title="Dev", company="Co")
-        dup = db.insert_job(portal="naukri", external_id="456", title="Dev", company="Co")
-        assert dup is None
+        job_id, is_new = db.insert_job(portal="naukri", external_id="456", title="Dev", company="Co")
+        assert is_new is True
+        dup_id, dup_new = db.insert_job(portal="naukri", external_id="456", title="Dev", company="Co")
+        assert dup_new is False
+        assert dup_id == job_id
     finally:
         teardown_test_db(path, original)
 
@@ -70,7 +73,7 @@ def test_is_already_applied():
     try:
         assert db.is_already_applied("TestCo", "Dev") is False
 
-        job_id = db.insert_job(portal="indeed", external_id="789", title="Dev", company="TestCo")
+        job_id, _ = db.insert_job(portal="indeed", external_id="789", title="Dev", company="TestCo")
         db.insert_application(job_id, "indeed", status="applied")
 
         assert db.is_already_applied("TestCo", "Dev") is True
@@ -113,7 +116,7 @@ def test_daily_run_lifecycle():
 def test_update_job_scores():
     path, original = setup_test_db()
     try:
-        job_id = db.insert_job(portal="naukri", external_id="score1", title="Dev", company="Co")
+        job_id, _ = db.insert_job(portal="naukri", external_id="score1", title="Dev", company="Co")
         db.update_job_scores(job_id, keyword_score=0.8, ai_score=0.75, selected_cv="backend_focused")
 
         with db.get_connection() as conn:
@@ -121,5 +124,50 @@ def test_update_job_scores():
             assert row["keyword_score"] == 0.8
             assert row["ai_score"] == 0.75
             assert row["selected_cv"] == "backend_focused"
+    finally:
+        teardown_test_db(path, original)
+
+
+def test_save_and_get_generated_content():
+    path, original = setup_test_db()
+    try:
+        job_id, _ = db.insert_job(portal="naukri", external_id="gen1", title="PM", company="Acme")
+
+        # Initially empty
+        content = db.get_generated_content(job_id)
+        assert content["cover_letter"] == ""
+        assert content["tailored_cv_text"] == ""
+        assert content["recruiter_message"] == ""
+
+        # Save content (creates application row)
+        db.save_generated_content(
+            job_id,
+            cover_letter="Dear Hiring...",
+            tailored_cv_text="SUMMARY\nLeader with 8+ years...",
+            recruiter_message="Hi, I saw your posting...",
+        )
+
+        content = db.get_generated_content(job_id)
+        assert content["cover_letter"] == "Dear Hiring..."
+        assert "Leader with 8+ years" in content["tailored_cv_text"]
+        assert content["recruiter_message"] == "Hi, I saw your posting..."
+
+        # Update content (existing row)
+        db.save_generated_content(job_id, cover_letter="Updated letter")
+        content = db.get_generated_content(job_id)
+        assert content["cover_letter"] == "Updated letter"
+        assert "Leader with 8+ years" in content["tailored_cv_text"]
+    finally:
+        teardown_test_db(path, original)
+
+
+def test_is_job_scored():
+    path, original = setup_test_db()
+    try:
+        job_id, _ = db.insert_job(portal="indeed", external_id="sc1", title="Dev", company="Co")
+        assert db.is_job_scored(job_id) is False
+
+        db.update_job_scores(job_id, ai_score=0.85)
+        assert db.is_job_scored(job_id) is True
     finally:
         teardown_test_db(path, original)
