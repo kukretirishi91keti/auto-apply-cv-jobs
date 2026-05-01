@@ -49,6 +49,7 @@ async def process_portal(
     dry_run: bool = False,
     scrape_only: bool = False,
     limit: int | None = None,
+    ai_scoring_state: list[int] | None = None,
 ) -> dict[str, int]:
     """Run the full pipeline for a single portal."""
     stats = {"discovered": 0, "matched": 0, "applied": 0, "failed": 0}
@@ -144,8 +145,16 @@ async def process_portal(
             if not is_new:
                 logger.info("Re-scoring previously unscored job: %s at %s", job.title, job.company)
 
+            # Enforce AI scoring cap (shared across all portals)
+            ai_cap = config.matching.max_ai_scorings_per_day
+            if ai_scoring_state is not None and ai_scoring_state[0] >= ai_cap:
+                logger.info("AI scoring cap reached (%d) — skipping remaining jobs in %s", ai_cap, portal_name)
+                break
+
             # Match
             result = match_job(job.title, job.description, cv_texts, config, creds)
+            if ai_scoring_state is not None:
+                ai_scoring_state[0] += 1
             update_job_scores(job_id, keyword_score=result.keyword_score, ai_score=result.ai_score, selected_cv=result.recommended_cv)
 
             if not result.should_apply:
@@ -224,6 +233,10 @@ async def run_pipeline(
     if not cv_texts:
         logger.warning("No CVs loaded — check config/settings.yaml and data/cvs/")
 
+    # Shared AI scoring counter (enforces max_ai_scorings_per_day across all portals)
+    ai_scoring_count = 0
+    ai_scoring_cap = config.matching.max_ai_scorings_per_day
+
     portal_list = portals or [name for name, pc in config.portals.items() if pc.enabled]
     portal_results: dict[str, dict[str, int]] = {}
 
@@ -295,9 +308,13 @@ async def run_pipeline(
             if is_already_applied(job.company, job.title):
                 continue
 
-            # Match
+            # Match (respects AI scoring cap)
             if cv_texts:
+                if ai_scoring_count >= ai_scoring_cap:
+                    logger.info("AI scoring cap reached (%d) — skipping remaining jobs", ai_scoring_cap)
+                    break
                 result = match_job(job.title, job.description, cv_texts, config, creds)
+                ai_scoring_count += 1
                 update_job_scores(job_id, keyword_score=result.keyword_score, ai_score=result.ai_score, selected_cv=result.recommended_cv)
                 if result.should_apply:
                     agg_stats["matched"] += 1
@@ -309,11 +326,14 @@ async def run_pipeline(
         logger.info("No aggregator API keys configured — set RAPIDAPI_KEY or ADZUNA_APP_ID+ADZUNA_APP_KEY in .env")
 
     # ── Step 2: Per-portal direct search (fallback / supplement) ──
+    # Pass AI scoring counter as a mutable list so it's shared across portals
+    ai_state = [ai_scoring_count]
     for portal_name in portal_list:
         logger.info("=== Processing portal: %s ===", portal_name)
         stats = await process_portal(
             portal_name, config, creds, cv_texts,
             dry_run=dry_run, scrape_only=scrape_only, limit=limit,
+            ai_scoring_state=ai_state,
         )
         portal_results[portal_name] = stats
 

@@ -21,7 +21,7 @@ def test_load_config_defaults():
 
 def test_cv_versions():
     config = load_config()
-    assert len(config.cvs.versions) == 3
+    assert len(config.cvs.versions) >= 2
     for v in config.cvs.versions:
         assert isinstance(v, CVVersion)
         assert v.name

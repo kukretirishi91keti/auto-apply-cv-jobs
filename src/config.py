@@ -25,6 +25,7 @@ class SearchConfig(BaseModel):
     keywords: list[str] = []
     locations: list[str] = []
     experience_years: int = 0
+    seniority_levels: list[str] = []
     min_salary: int = 0
     excluded_companies: list[str] = []
 
@@ -36,7 +37,7 @@ class CVConfig(BaseModel):
 
 class MatchingConfig(BaseModel):
     keyword_min_score: float = 0.3
-    ai_min_score: float = 0.6
+    ai_min_score: float = 0.7
     ai_model: str = "claude-sonnet-4-20250514"
     max_ai_scorings_per_day: int = 100
     api_budget_usd: float = 2.0

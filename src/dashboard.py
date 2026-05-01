@@ -316,17 +316,33 @@ def _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_text
     if not cv_text:
         return ""
     client = anthropic.Anthropic(api_key=crd.anthropic_api_key)
-    prompt = f"""You are a senior career coach. Rewrite the candidate's CV content \
-to be perfectly aligned with this specific job posting.
+    prompt = f"""You are a senior career coach creating a tailored CV for a job application.
+
+OUTPUT FORMAT — use this exact structure with ALL CAPS section headers:
+
+PROFESSIONAL SUMMARY
+[3-4 lines directly addressing this role, mentioning years of experience and key relevant skills]
+
+CORE COMPETENCIES
+[10-12 most relevant skills separated by " | " on one line]
+
+PROFESSIONAL EXPERIENCE
+[Company Name | Role Title | Duration]
+- [Achievement bullet with metrics]
+- [Achievement bullet with metrics]
+[Repeat for 2-3 most relevant roles only]
+
+KEY ACHIEVEMENTS
+- [Top 3-4 measurable achievements most relevant to this job]
 
 RULES:
-- Output ONLY the rewritten text — no formatting instructions, no headers like "CV" or "Resume"
-- Keep it concise: max 1 page worth of content
-- Rewrite the Professional Summary (3-4 lines) to directly address this role
-- Rewrite the top 5-6 Experience bullets to highlight relevant achievements using metrics
-- List the most relevant Skills (10-12) for this role first
-- Add a "Why I'm a fit" section (2-3 bullet points mapping experience to job requirements)
+- Output ONLY the CV text — no commentary, no "Here is your CV", no markdown bold (**)
+- Use ALL CAPS for section headers (PROFESSIONAL SUMMARY, not **Professional Summary**)
+- Use " | " to separate items in skill lists and job title lines
+- Each bullet must start with "- " and include a metric (%, Rs., number)
+- Keep it to 1 page worth of content (under 400 words)
 - Keep all facts truthful — only reframe/emphasize, never fabricate
+- Do NOT include candidate name, email, or phone — those are added separately
 
 Job Title: {title}
 Company: {company}
