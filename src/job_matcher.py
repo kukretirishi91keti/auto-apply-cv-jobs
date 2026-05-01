@@ -20,20 +20,18 @@ class MatchResult:
     recommended_cv: str | None = None
     reasoning: str = ""
     should_apply: bool = False
+    used_ai: bool = False
 
 
 def keyword_score(job_title: str, job_description: str, keywords: list[str]) -> float:
     """Stage 1: Fast keyword matching (free).
 
-    Returns 0.0–1.0. Uses ANY-match logic: if ANY keyword matches, the job
-    passes. Score = proportion of keywords found, but a single match is enough
-    to pass the threshold (returns at least 0.3 for any match).
-
-    Keywords are split on commas to handle compound entries like
-    "BFSI, FinTech, Life Insurance" as separate terms.
+    Returns 0.0-1.0. Uses word-level matching: each keyword phrase is split
+    into individual words, and ALL words must appear in the text (in any order).
+    This handles variations like "VP of Growth" matching keyword "VP Growth".
     """
     if not keywords:
-        return 1.0  # no keywords configured = pass everything
+        return 1.0
 
     # Split compound keywords on commas
     terms: list[str] = []
@@ -47,12 +45,17 @@ def keyword_score(job_title: str, job_description: str, keywords: list[str]) -> 
         return 1.0
 
     text = f"{job_title} {job_description}".lower()
-    matches = sum(1 for term in terms if term in text)
+    text_words = set(re.findall(r"[a-z0-9]+", text))
+
+    matches = 0
+    for term in terms:
+        term_words = set(re.findall(r"[a-z0-9]+", term))
+        if term_words and term_words.issubset(text_words):
+            matches += 1
 
     if matches == 0:
         return 0.0
 
-    # Any match = at least 0.3 (passes default threshold)
     raw_score = matches / len(terms)
     return max(raw_score, 0.3)
 
@@ -191,4 +194,5 @@ def match_job(
         recommended_cv=cv_name,
         reasoning=reason,
         should_apply=should_apply,
+        used_ai=True,
     )
