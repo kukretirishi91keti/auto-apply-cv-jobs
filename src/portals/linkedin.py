@@ -67,8 +67,8 @@ class LinkedInPortal(BasePortal):
         if not terms:
             terms = ["jobs"]
 
-        # Search across all configured locations (not just the first)
-        locations = self.config.search.locations or [""]
+        # Cap locations to avoid HTTP request explosion (terms × locations × 3 pages)
+        locations = (self.config.search.locations or [""])[:5]
 
         for keyword in terms:
             for location in locations:

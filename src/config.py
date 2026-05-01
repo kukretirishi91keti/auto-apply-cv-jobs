@@ -36,7 +36,7 @@ class CVConfig(BaseModel):
 
 class MatchingConfig(BaseModel):
     keyword_min_score: float = 0.3
-    ai_min_score: float = 0.6
+    ai_min_score: float = 0.7
     ai_model: str = "claude-sonnet-4-20250514"
     max_ai_scorings_per_day: int = 100
     api_budget_usd: float = 2.0

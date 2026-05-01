@@ -40,7 +40,7 @@ matching:
   # Stage 1: keyword filter (free, fast)
   keyword_min_score: 0.3       # 0-1, minimum keyword overlap to pass to stage 2
   # Stage 2: Claude AI scoring (paid, smart)
-  ai_min_score: 0.6            # 0-1, minimum AI score to auto-apply
+  ai_min_score: 0.7            # 0-1, minimum AI score to auto-apply
   ai_model: "claude-sonnet-4-20250514"
   max_ai_scorings_per_day: 100
   api_budget_usd: 2.00         # hard-stop daily Claude API spend
