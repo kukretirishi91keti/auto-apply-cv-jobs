@@ -37,6 +37,9 @@ cvs:
     - name: "growth_digital"
       file: "CV_Prime_Video_&_Amazon_MGM_Studios.pdf"
       description: "Growth leadership, digital marketing, user acquisition, content strategy"
+    - name: "general"
+      file: "Rishi Kukreti CV.pdf"
+      description: "General marketing, product management, business strategy"
 
 # Matching configuration
 matching:

@@ -153,7 +153,7 @@ async def process_portal(
 
             # Match
             result = match_job(job.title, job.description, cv_texts, config, creds)
-            if ai_scoring_state is not None:
+            if ai_scoring_state is not None and result.used_ai:
                 ai_scoring_state[0] += 1
             update_job_scores(job_id, keyword_score=result.keyword_score, ai_score=result.ai_score, selected_cv=result.recommended_cv)
 
@@ -314,7 +314,8 @@ async def run_pipeline(
                     logger.info("AI scoring cap reached (%d) — skipping remaining jobs", ai_scoring_cap)
                     break
                 result = match_job(job.title, job.description, cv_texts, config, creds)
-                ai_scoring_count += 1
+                if result.used_ai:
+                    ai_scoring_count += 1
                 update_job_scores(job_id, keyword_score=result.keyword_score, ai_score=result.ai_score, selected_cv=result.recommended_cv)
                 if result.should_apply:
                     agg_stats["matched"] += 1
