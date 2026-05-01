@@ -109,7 +109,7 @@ def generate_cover_letter_pdf(
         pdf.multi_cell(_CONTENT_W, 5.5, paragraph)
         pdf.ln(2)
 
-    return pdf.output()
+    return bytes(pdf.output())
 
 
 def generate_tailored_cv_pdf(
@@ -156,7 +156,7 @@ def generate_tailored_cv_pdf(
             pdf.multi_cell(_CONTENT_W, 5, _sanitize(body).strip())
             pdf.ln(4)
 
-    return pdf.output()
+    return bytes(pdf.output())
 
 
 def _parse_cv_sections(text: str) -> list[tuple[str, str]]:
@@ -232,4 +232,4 @@ def generate_recruiter_message_pdf(
         pdf.multi_cell(_CONTENT_W, 5, _sanitize(msg.get("message", "")).strip())
         pdf.ln(6)
 
-    return pdf.output()
+    return bytes(pdf.output())
