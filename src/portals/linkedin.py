@@ -84,6 +84,13 @@ class LinkedInPortal(BasePortal):
         self.logger.info("LinkedIn total: %d unique jobs from %d terms × %d locations", len(all_jobs), len(terms), len(locations))
         return all_jobs
 
+    # LinkedIn f_E values: 1=Internship, 2=Entry, 3=Associate, 4=Mid-Senior, 5=Director, 6=Executive
+    _SENIORITY_MAP = {
+        "internship": "1", "entry": "2", "associate": "3",
+        "mid-senior": "4", "senior": "4", "mid": "4",
+        "director": "5", "vp": "6", "executive": "6",
+    }
+
     async def _search_keyword(self, keyword: str, location: str = "") -> list[JobListing]:
         """Search for a single keyword+location via LinkedIn guest page with pagination."""
         jobs: list[JobListing] = []
@@ -98,6 +105,17 @@ class LinkedInPortal(BasePortal):
                     "position": 1,
                     "pageNum": page_num,
                 }
+
+                # Add seniority filter if configured
+                seniority = self.config.search.seniority_levels
+                if seniority:
+                    levels = set()
+                    for s in seniority:
+                        mapped = self._SENIORITY_MAP.get(s.lower())
+                        if mapped:
+                            levels.add(mapped)
+                    if levels:
+                        params["f_E"] = ",".join(sorted(levels))
 
                 resp = await client.get(f"{self.BASE_URL}/jobs/search/", params=params)
                 if resp.status_code >= 400:

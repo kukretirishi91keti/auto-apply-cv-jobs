@@ -3,19 +3,25 @@
 # Job search preferences
 search:
   keywords:
-    - "Product Manager"
-    - "Growth Manager"
-    - "Brand Manager"
-    - "Digital Marketing Manager"
-    - "GTM Strategy"
-    - "BFSI Marketing"
-    - "AVP Marketing"
-    - "VP Growth"
+    - "AVP Marketing, AVP Brand, AVP Digital Marketing"
+    - "VP Growth, VP Marketing, VP Brand"
+    - "Head of Marketing, Head of Brand, Head of Growth"
+    - "Director Marketing, Director Brand Strategy"
+    - "Senior Product Manager, Lead Product Manager"
+    - "GTM Strategy, Go To Market"
+    - "BFSI Marketing, Insurance Marketing, FinTech Marketing"
+    - "Digital Marketing Head, Performance Marketing Lead"
   locations:
     - "Bangalore"
     - "Mumbai"
+    - "Delhi NCR"
+    - "Hyderabad"
     - "Remote"
   experience_years: 10
+  seniority_levels:
+    - "senior"       # Senior level (5-8 yrs)
+    - "director"     # Director level (8-12 yrs)
+    - "vp"           # VP level (10-15 yrs)
   min_salary: 0          # 0 = no minimum
   excluded_companies:
     - "example-spam-company"
@@ -25,15 +31,12 @@ cvs:
   # Path relative to project root
   directory: "data/cvs"
   versions:
-    - name: "backend_focused"
-      file: "cv_backend.pdf"
-      description: "Emphasizes backend, APIs, databases, microservices"
-    - name: "fullstack_focused"
-      file: "cv_fullstack.pdf"
-      description: "Emphasizes full-stack, React/Vue, Node.js, cloud"
-    - name: "data_focused"
-      file: "cv_data.pdf"
-      description: "Emphasizes data engineering, ML pipelines, analytics"
+    - name: "brand_bfsi"
+      file: "CV_Talentfit.in.pdf"
+      description: "Brand development, BFSI marketing, celebrity partnerships, insurance"
+    - name: "growth_digital"
+      file: "CV_Prime_Video_&_Amazon_MGM_Studios.pdf"
+      description: "Growth leadership, digital marketing, user acquisition, content strategy"
 
 # Matching configuration
 matching:

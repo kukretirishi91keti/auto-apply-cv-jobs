@@ -72,13 +72,32 @@ def ai_score_job(
         f"- {name}: {text[:1500]}..." for name, text in cv_texts.items()
     )
 
+    exp_years = config.search.experience_years
+    seniority = config.search.seniority_levels
+
+    seniority_hint = ""
+    if exp_years or seniority:
+        parts = []
+        if exp_years:
+            parts.append(f"{exp_years}+ years of experience")
+        if seniority:
+            parts.append(f"targeting {'/'.join(seniority)}-level roles")
+        seniority_hint = f"\nCandidate Profile: {', '.join(parts)}."
+
     prompt = f"""You are a senior recruiter. Rate how well this candidate matches this job.
+{seniority_hint}
+STRICT RULES:
+- Score 0.3 or below if the role is junior/entry-level and the candidate has {exp_years}+ years
+- Score 0.3 or below if the role is in a completely unrelated industry/domain
+- Score 0.3 or below if the job is in a different country unless explicitly marked "Remote"
+- Score 0.5-0.7 if there's partial overlap in domain or transferable skills
+- Score 0.7+ ONLY if the role level, domain, AND skills are directly relevant
 
 Consider:
-- Role level alignment (VP/Director/Manager/Associate)
-- Industry/domain overlap (BFSI, FinTech, Insurance, Product, etc.)
+- Role level alignment — a {exp_years}-year candidate should NOT match Associate/Junior roles
+- Industry/domain overlap (BFSI, FinTech, Insurance, Marketing, Product, Growth)
 - Skills and experience relevance
-- Seniority match
+- Location relevance (India-based candidate)
 
 Job Title: {job_title}
 Job Description:
@@ -86,10 +105,6 @@ Job Description:
 
 Candidate CVs:
 {cv_summaries}
-
-Score 0.7+ if the candidate's experience is directly relevant.
-Score 0.5-0.7 if there's partial overlap in domain or skills.
-Score below 0.5 if the role is clearly misaligned.
 
 Respond in exactly this format:
 SCORE: <0.0-1.0>
@@ -127,6 +142,20 @@ REASON: <one sentence>"""
     return min(max(score, 0.0), 1.0), cv_name, reason
 
 
+_JUNIOR_TITLE_PATTERNS = [
+    "intern", "trainee", "apprentice", "fresher", "entry level",
+    "junior", "associate analyst", "graduate trainee",
+]
+
+
+def _is_seniority_mismatch(job_title: str, experience_years: int) -> bool:
+    """Quick check: reject obviously junior roles for senior candidates."""
+    if experience_years < 7:
+        return False
+    title_lower = job_title.lower()
+    return any(pat in title_lower for pat in _JUNIOR_TITLE_PATTERNS)
+
+
 def match_job(
     job_title: str,
     job_description: str,
@@ -135,6 +164,11 @@ def match_job(
     creds: Credentials,
 ) -> MatchResult:
     """Run two-stage matching pipeline."""
+    # Stage 0: Seniority filter (free, instant)
+    if _is_seniority_mismatch(job_title, config.search.experience_years):
+        logger.debug("Job '%s' rejected — junior title for %d-year candidate", job_title, config.search.experience_years)
+        return MatchResult(keyword_score=0.0, should_apply=False)
+
     # Stage 1: Keyword filter
     kw_score = keyword_score(job_title, job_description, config.search.keywords)
 

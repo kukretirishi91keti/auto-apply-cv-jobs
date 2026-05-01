@@ -42,31 +42,38 @@ class _BasePDF(FPDF):
 
     def __init__(self) -> None:
         super().__init__()
-        self.set_auto_page_break(auto=True, margin=25)
-        self.set_margins(_MARGIN, _MARGIN, _MARGIN)
+        self.set_auto_page_break(auto=True, margin=20)
+        self.set_margins(_MARGIN, 15, _MARGIN)
 
     def _write_section(self, title: str, body: str) -> None:
-        self.set_font(_FONT, "B", 11)
+        self.set_font(_FONT, "B", 10.5)
         self.set_text_color(30, 60, 110)
-        self.cell(0, 7, _sanitize(title.upper()), new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 6, _sanitize(title.upper()), new_x="LMARGIN", new_y="NEXT")
         self.set_draw_color(30, 60, 110)
         self.line(self.x, self.y, self.x + _CONTENT_W, self.y)
-        self.ln(3)
+        self.ln(2)
 
-        self.set_font(_FONT, "", 10)
+        self.set_font(_FONT, "", 9.5)
         self.set_text_color(40, 40, 40)
         for line in _sanitize(body).strip().split("\n"):
             line = line.strip()
             if not line:
-                self.ln(3)
+                self.ln(2)
                 continue
-            if line.startswith(("- ", "* ")):
-                self.set_x(_MARGIN + 5)
-                bullet_text = line.lstrip("-* ").strip()
-                self.multi_cell(_CONTENT_W - 5, 5, f"  -  {bullet_text}")
-            else:
+            # Detect sub-headers (bold lines like "Company Name | Role | Date")
+            if "|" in line and not line.startswith(("- ", "* ")) and len(line) < 120:
+                self.set_font(_FONT, "B", 9.5)
+                self.set_text_color(50, 50, 50)
                 self.multi_cell(_CONTENT_W, 5, line)
-        self.ln(4)
+                self.set_font(_FONT, "", 9.5)
+                self.set_text_color(40, 40, 40)
+            elif line.startswith(("- ", "* ")):
+                self.set_x(_MARGIN + 4)
+                bullet_text = line.lstrip("-* ").strip()
+                self.multi_cell(_CONTENT_W - 4, 4.5, f"  -  {bullet_text}")
+            else:
+                self.multi_cell(_CONTENT_W, 4.5, line)
+        self.ln(3)
 
 
 def generate_cover_letter_pdf(
@@ -127,21 +134,21 @@ def generate_tailored_cv_pdf(
     pdf = _BasePDF()
     pdf.add_page()
 
-    # Header
+    # Header — compact name block
     if candidate_name:
-        pdf.set_font(_FONT, "B", 18)
+        pdf.set_font(_FONT, "B", 16)
         pdf.set_text_color(30, 60, 110)
-        pdf.cell(0, 10, candidate_name, new_x="LMARGIN", new_y="NEXT", align="C")
+        pdf.cell(0, 8, candidate_name, new_x="LMARGIN", new_y="NEXT", align="C")
 
     if contact_info:
-        pdf.set_font(_FONT, "", 9)
+        pdf.set_font(_FONT, "", 8.5)
         pdf.set_text_color(80, 80, 80)
-        pdf.cell(0, 5, _sanitize(contact_info), new_x="LMARGIN", new_y="NEXT", align="C")
+        pdf.cell(0, 4, _sanitize(contact_info), new_x="LMARGIN", new_y="NEXT", align="C")
 
     if candidate_name or contact_info:
         pdf.set_draw_color(30, 60, 110)
-        pdf.line(_MARGIN, pdf.y + 2, _PAGE_W - _MARGIN, pdf.y + 2)
-        pdf.ln(6)
+        pdf.line(_MARGIN, pdf.y + 1, _PAGE_W - _MARGIN, pdf.y + 1)
+        pdf.ln(4)
 
     # Parse and render sections
     sections = _parse_cv_sections(tailored_cv_text)
@@ -150,11 +157,10 @@ def generate_tailored_cv_pdf(
         if title:
             pdf._write_section(title, body)
         else:
-            # Free-form text (e.g., professional summary before first heading)
-            pdf.set_font(_FONT, "", 10)
+            pdf.set_font(_FONT, "", 9.5)
             pdf.set_text_color(40, 40, 40)
-            pdf.multi_cell(_CONTENT_W, 5, _sanitize(body).strip())
-            pdf.ln(4)
+            pdf.multi_cell(_CONTENT_W, 4.5, _sanitize(body).strip())
+            pdf.ln(3)
 
     return bytes(pdf.output())
 

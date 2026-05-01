@@ -25,6 +25,7 @@ class SearchConfig(BaseModel):
     keywords: list[str] = []
     locations: list[str] = []
     experience_years: int = 0
+    seniority_levels: list[str] = []
     min_salary: int = 0
     excluded_companies: list[str] = []
 
