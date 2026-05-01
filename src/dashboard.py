@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import shutil
@@ -318,30 +319,42 @@ def _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_text
     client = anthropic.Anthropic(api_key=crd.anthropic_api_key)
     prompt = f"""You are a senior career coach creating a tailored CV for a job application.
 
+CRITICAL: You must ONLY use companies, roles, dates, and achievements that appear in the
+candidate's actual CV below. Do NOT invent, fabricate, or hallucinate any experience,
+company names, job titles, or achievements. If the CV only has one employer, only list
+that one employer. Never add fictional previous roles.
+
 OUTPUT FORMAT — use this exact structure with ALL CAPS section headers:
 
 PROFESSIONAL SUMMARY
-[3-4 lines directly addressing this role, mentioning years of experience and key relevant skills]
+[4-5 lines directly addressing this role. Mention total years of experience, current
+company and role, and 3-4 key skills relevant to the target job. Be specific.]
 
 CORE COMPETENCIES
-[10-12 most relevant skills separated by " | " on one line]
+[12-15 most relevant skills separated by " | " on 2-3 lines]
 
 PROFESSIONAL EXPERIENCE
-[Company Name | Role Title | Duration]
+[Company Name | Role Title | Duration — ONLY from the actual CV]
+- [Achievement bullet with metrics — ONLY real achievements from the CV]
 - [Achievement bullet with metrics]
 - [Achievement bullet with metrics]
-[Repeat for 2-3 most relevant roles only]
+- [Achievement bullet with metrics]
+[Include ALL roles from the actual CV, with 3-5 bullets each. Reframe bullets
+to emphasize relevance to the target job, but never change the facts.]
 
 KEY ACHIEVEMENTS
-- [Top 3-4 measurable achievements most relevant to this job]
+- [Top 5-6 measurable achievements most relevant to this job — ONLY from the CV]
+
+WHY I'M A FIT
+- [2-3 bullet points mapping specific CV experience to job requirements]
 
 RULES:
-- Output ONLY the CV text — no commentary, no "Here is your CV", no markdown bold (**)
-- Use ALL CAPS for section headers (PROFESSIONAL SUMMARY, not **Professional Summary**)
+- Output ONLY the CV text — no commentary, no preamble, no markdown bold (**)
+- Use ALL CAPS for section headers
 - Use " | " to separate items in skill lists and job title lines
-- Each bullet must start with "- " and include a metric (%, Rs., number)
-- Keep it to 1 page worth of content (under 400 words)
-- Keep all facts truthful — only reframe/emphasize, never fabricate
+- Each bullet must start with "- " and include a metric (%, Rs., Cr, number)
+- Target 500-600 words (full 1 page when formatted as PDF)
+- NEVER fabricate companies, roles, or achievements not in the candidate's CV
 - Do NOT include candidate name, email, or phone — those are added separately
 
 Job Title: {title}
@@ -349,8 +362,8 @@ Company: {company}
 Job Description:
 {(description or 'No description available')[:3000]}
 
-Current CV:
-{cv_text[:4000]}
+Candidate's ACTUAL CV (use ONLY facts from this):
+{cv_text[:5000]}
 
 Write the tailored CV content now:"""
     response = client.messages.create(
@@ -635,7 +648,8 @@ def render_manual_queue() -> None:
                     else:
                         from src.pdf_generator import generate_cover_letter_pdf
                         user_name = st.session_state.get("user_name", "")
-                        pdf = generate_cover_letter_pdf(saved_cl, title, company, user_name)
+                        clean_name = re.sub(r"\.(pdf|docx?|txt)$", "", user_name, flags=re.IGNORECASE).strip()
+                        pdf = generate_cover_letter_pdf(saved_cl, title, company, clean_name)
                         st.download_button(
                             "Download CL PDF",
                             pdf,
@@ -659,7 +673,8 @@ def render_manual_queue() -> None:
                     else:
                         from src.pdf_generator import generate_tailored_cv_pdf
                         user_name = st.session_state.get("user_name", "")
-                        pdf = generate_tailored_cv_pdf(saved_cv, user_name)
+                        clean_name = re.sub(r"\.(pdf|docx?|txt)$", "", user_name, flags=re.IGNORECASE).strip()
+                        pdf = generate_tailored_cv_pdf(saved_cv, clean_name)
                         st.download_button(
                             "Download CV PDF",
                             pdf,

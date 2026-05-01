@@ -23,12 +23,51 @@ class MatchResult:
     used_ai: bool = False
 
 
+_ABBREVIATIONS = {
+    "avp": "assistant vice president",
+    "vp": "vice president",
+    "svp": "senior vice president",
+    "evp": "executive vice president",
+    "cmo": "chief marketing officer",
+    "coo": "chief operating officer",
+    "ceo": "chief executive officer",
+    "cfo": "chief financial officer",
+    "cto": "chief technology officer",
+    "gm": "general manager",
+    "agm": "assistant general manager",
+    "dgm": "deputy general manager",
+    "gtm": "go to market",
+    "bfsi": "banking financial services insurance",
+}
+
+
+_ABBR_BY_LENGTH = sorted(_ABBREVIATIONS.items(), key=lambda x: -len(x[1]))
+
+
+def _expand_text(text: str) -> set[str]:
+    """Return all words from text plus abbreviation expansions (both directions)."""
+    text_lower = text.lower()
+    words = set(re.findall(r"[a-z0-9]+", text_lower))
+    extra: set[str] = set()
+    consumed: set[str] = set()
+    for abbr, full in _ABBR_BY_LENGTH:
+        if abbr in words:
+            extra.update(full.split())
+        if full in text_lower and abbr not in consumed:
+            extra.add(abbr)
+            for other_abbr, other_full in _ABBR_BY_LENGTH:
+                if other_full != full and other_full in full:
+                    consumed.add(other_abbr)
+    return words | extra
+
+
 def keyword_score(job_title: str, job_description: str, keywords: list[str]) -> float:
     """Stage 1: Fast keyword matching (free).
 
-    Returns 0.0-1.0. Uses word-level matching: each keyword phrase is split
-    into individual words, and ALL words must appear in the text (in any order).
-    This handles variations like "VP of Growth" matching keyword "VP Growth".
+    Returns 0.0-1.0. Uses word-level matching with abbreviation expansion.
+    Each keyword phrase is split into words, and ALL words must appear in
+    the text (in any order). Handles: "VP of Growth" ↔ "VP Growth",
+    "Assistant Vice President" ↔ "AVP", etc.
     """
     if not keywords:
         return 1.0
@@ -44,12 +83,12 @@ def keyword_score(job_title: str, job_description: str, keywords: list[str]) -> 
     if not terms:
         return 1.0
 
-    text = f"{job_title} {job_description}".lower()
-    text_words = set(re.findall(r"[a-z0-9]+", text))
+    raw_text = f"{job_title} {job_description}"
+    text_words = _expand_text(raw_text)
 
     matches = 0
     for term in terms:
-        term_words = set(re.findall(r"[a-z0-9]+", term))
+        term_words = _expand_text(term)
         if term_words and term_words.issubset(text_words):
             matches += 1
 
