@@ -3,15 +3,19 @@
 # Job search preferences
 search:
   keywords:
-    - "software engineer"
-    - "backend developer"
-    - "full stack developer"
-    - "python developer"
+    - "Product Manager"
+    - "Growth Manager"
+    - "Brand Manager"
+    - "Digital Marketing Manager"
+    - "GTM Strategy"
+    - "BFSI Marketing"
+    - "AVP Marketing"
+    - "VP Growth"
   locations:
     - "Bangalore"
     - "Mumbai"
     - "Remote"
-  experience_years: 5
+  experience_years: 10
   min_salary: 0          # 0 = no minimum
   excluded_companies:
     - "example-spam-company"
