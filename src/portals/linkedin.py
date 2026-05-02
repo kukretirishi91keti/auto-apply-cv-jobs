@@ -69,7 +69,12 @@ class LinkedInPortal(BasePortal):
             terms = ["jobs"]
 
         # Cap locations to avoid HTTP request explosion (terms × locations × 3 pages)
-        locations = (self.config.search.locations or [""])[:5]
+        # Append "India" to "Remote" to avoid pulling global/US-only remote jobs
+        raw_locations = (self.config.search.locations or [""])[:5]
+        locations = [
+            f"{loc} India" if loc.lower().strip() == "remote" else loc
+            for loc in raw_locations
+        ]
 
         for keyword in terms:
             for location in locations:

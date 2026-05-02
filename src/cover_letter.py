@@ -31,6 +31,8 @@ def generate_cover_letter(
 Keep it under 250 words. Be specific about how the candidate's experience matches the role.
 Do NOT use generic filler — reference actual skills from the CV that match the job.
 Do NOT use placeholders like [Candidate Name] or [Your Name] — use the actual name.
+Do NOT mention specific number of years of experience (e.g. "8 years", "10+ years").
+Instead use phrases like "extensive experience" or "proven track record".
 {name_line}
 
 Job Title: {job_title}
