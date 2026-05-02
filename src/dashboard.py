@@ -333,8 +333,9 @@ ATS OPTIMIZATION — most companies use Applicant Tracking Systems that scan CVs
 OUTPUT FORMAT — use this exact structure with ALL CAPS section headers:
 
 PROFESSIONAL SUMMARY
-[4-5 lines. Open with exact target job title + total years. Weave in 5-6 keywords
-directly from the job description. Mention current company and role. Be specific.]
+[4-5 lines. Open with "Seasoned [domain] professional with specialised experience in..."
+Do NOT mention specific number of years. Weave in 5-6 keywords directly from the job
+description. Mention current company and role. Be specific.]
 
 CORE COMPETENCIES
 [12-15 skills separated by " | " on 2-3 lines. Pull terms DIRECTLY from the job
@@ -363,6 +364,8 @@ RULES:
 - Use " | " to separate items in skill lists and job title lines
 - Each bullet must start with "- " and include a metric (%, Rs., Cr, number)
 - Target 500-600 words (full 1 page when formatted as PDF)
+- NEVER mention specific number of years of experience (e.g. "10 years", "8+ years")
+  Instead use "Seasoned professional" or "Extensive experience" — let the CV speak for itself
 - NEVER fabricate companies, roles, or achievements not in the candidate's CV
 - Do NOT include candidate name, email, or phone — those are added separately
 - Mirror exact phrases from the job description (e.g. if JD says "go-to-market
