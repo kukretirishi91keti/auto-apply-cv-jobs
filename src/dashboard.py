@@ -307,7 +307,9 @@ def _generate_cover_letter_for_job(title, company, description, cfg, crd, cv_tex
     cv_text = next(iter(cv_texts.values()), "")
     if not cv_text:
         return ""
-    return generate_cover_letter(title, company, description or "", cv_text, cfg, crd)
+    user_name = st.session_state.get("user_name", "")
+    clean_name = re.sub(r"\.(pdf|docx?|txt)$", "", user_name, flags=re.IGNORECASE).strip()
+    return generate_cover_letter(title, company, description or "", cv_text, cfg, crd, candidate_name=clean_name)
 
 
 def _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_texts):
@@ -319,10 +321,13 @@ def _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_text
     client = anthropic.Anthropic(api_key=crd.anthropic_api_key)
     prompt = f"""You are a senior career coach creating an ATS-optimized tailored CV.
 
-CRITICAL: You must ONLY use companies, roles, dates, and achievements that appear in the
-candidate's actual CV below. Do NOT invent, fabricate, or hallucinate any experience,
-company names, job titles, or achievements. If the CV only has one employer, only list
-that one employer. Never add fictional previous roles.
+CRITICAL — ZERO TOLERANCE FOR FABRICATION:
+- You must ONLY use companies, roles, dates, and achievements that appear VERBATIM in
+  the candidate's actual CV text below.
+- Do NOT invent ANY company name, job title, role, date, or achievement.
+- If the CV lists 1 employer, output 1 employer. If it lists 2, output 2. Never add more.
+- Before writing each company name and role, verify it appears in the CV text below.
+- If you write a company name that does NOT appear in the CV text, the output is INVALID.
 
 ATS OPTIMIZATION — most companies use Applicant Tracking Systems that scan CVs for:
 1. EXACT keyword matches from the job description — mirror them verbatim
