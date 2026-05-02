@@ -15,23 +15,27 @@ _PAGE_W = 210  # A4 mm
 _MARGIN = 20
 _CONTENT_W = _PAGE_W - 2 * _MARGIN
 
-_UNICODE_REPLACE = {
-    "•": "-",  # bullet
-    "–": "-",  # en dash
-    "—": "--",  # em dash
-    "‘": "'",  # left single quote
-    "’": "'",  # right single quote
-    "“": '"',  # left double quote
-    "”": '"',  # right double quote
-    "…": "...",  # ellipsis
-    "₹": "Rs.",  # rupee sign
-    "′": "'",  # prime
-    "″": '"',  # double prime
-}
+# Characters that latin-1 core fonts cannot render — map to safe ASCII equivalents.
+# Keys are the unicode characters; values are their replacements.
+_UNICODE_REPLACE: dict[str, str] = {}
+_UNICODE_REPLACE["•"] = "-"    # bullet •
+_UNICODE_REPLACE["–"] = "-"    # en dash –
+_UNICODE_REPLACE["—"] = "--"   # em dash —
+_UNICODE_REPLACE["‘"] = "'"    # left single quote '
+_UNICODE_REPLACE["’"] = "'"    # right single quote '
+_UNICODE_REPLACE["“"] = '"'    # left double quote "
+_UNICODE_REPLACE["”"] = '"'    # right double quote "
+_UNICODE_REPLACE["…"] = "..."  # ellipsis …
+_UNICODE_REPLACE["₹"] = "Rs."  # rupee sign ₹
+_UNICODE_REPLACE["′"] = "'"    # prime ′
+_UNICODE_REPLACE["″"] = '"'    # double prime ″
+_UNICODE_REPLACE["®"] = ""     # registered trademark ® — strip
+_UNICODE_REPLACE["™"] = ""     # trademark ™ — strip
+_UNICODE_REPLACE["©"] = ""     # copyright © — strip
 
 
 def _sanitize(text: str) -> str:
-    """Replace unicode chars that latin-1 core fonts can't render."""
+    """Replace unicode chars that latin-1 core fonts cannot render."""
     for char, replacement in _UNICODE_REPLACE.items():
         text = text.replace(char, replacement)
     return text
@@ -75,9 +79,6 @@ class _BasePDF(FPDF):
             is_subheader = "|" in line and not line.startswith(("- ", "* ")) and len(line) < 120
             is_bullet = line.startswith(("- ", "* "))
 
-            # Prevent orphan: if this is a sub-header or last line of a section,
-            # and it would land alone on a new page, pull it to the next page
-            # along with a few following lines
             if is_subheader:
                 following_lines = min(3, len(lines) - i - 1)
                 needed = 5 + (following_lines * 4.5)
@@ -85,15 +86,17 @@ class _BasePDF(FPDF):
                     self.add_page()
                 self.set_font(_FONT, "B", 9.5)
                 self.set_text_color(50, 50, 50)
-                self.multi_cell(_CONTENT_W, 4.5, line)
+                self.set_x(self.l_margin)
+                self.multi_cell(_CONTENT_W, 4.5, line, new_x="LMARGIN", new_y="NEXT")
                 self.set_font(_FONT, "", 9.5)
                 self.set_text_color(40, 40, 40)
             elif is_bullet:
                 self.set_x(_MARGIN + 4)
                 bullet_text = line.lstrip("-* ").strip()
-                self.multi_cell(_CONTENT_W - 4, 4.5, f"  -  {bullet_text}")
+                self.multi_cell(_CONTENT_W - 4, 4.5, f"  -  {bullet_text}", new_x="LMARGIN", new_y="NEXT")
             else:
-                self.multi_cell(_CONTENT_W, 4.5, line)
+                self.set_x(self.l_margin)
+                self.multi_cell(_CONTENT_W, 4.5, line, new_x="LMARGIN", new_y="NEXT")
         self.ln(2.5)
 
 
@@ -117,10 +120,11 @@ def generate_cover_letter_pdf(
         pdf.cell(0, 10, candidate_name, new_x="LMARGIN", new_y="NEXT", align="C")
         pdf.ln(2)
 
-    # Subtitle
+    # Subtitle — strip trademark symbols from company/title display
+    subtitle = _sanitize(f"Cover Letter  |  {job_title} at {company}")
     pdf.set_font(_FONT, "", 9)
     pdf.set_text_color(100, 100, 100)
-    pdf.cell(0, 5, _sanitize(f"Cover Letter  |  {job_title} at {company}"), new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.cell(0, 5, subtitle, new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.set_draw_color(30, 60, 110)
     pdf.line(_MARGIN, pdf.y + 2, _PAGE_W - _MARGIN, pdf.y + 2)
     pdf.ln(8)
@@ -134,7 +138,8 @@ def generate_cover_letter_pdf(
         if not paragraph:
             pdf.ln(4)
             continue
-        pdf.multi_cell(_CONTENT_W, 5.5, paragraph)
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(_CONTENT_W, 5.5, paragraph, new_x="LMARGIN", new_y="NEXT")
         pdf.ln(2)
 
     return bytes(pdf.output())
@@ -186,7 +191,8 @@ def generate_tailored_cv_pdf(
             else:
                 pdf.set_font(_FONT, "", 9.5)
                 pdf.set_text_color(40, 40, 40)
-                pdf.multi_cell(_CONTENT_W, line_h, _sanitize(body).strip())
+                pdf.set_x(pdf.l_margin)
+                pdf.multi_cell(_CONTENT_W, line_h, _sanitize(body).strip(), new_x="LMARGIN", new_y="NEXT")
                 pdf.ln(section_gap)
 
         # If it fits on 1 page, or if this is already the compact attempt, use it
@@ -270,7 +276,8 @@ def generate_recruiter_message_pdf(
 
         pdf.set_font(_FONT, "", 10)
         pdf.set_text_color(40, 40, 40)
-        pdf.multi_cell(_CONTENT_W, 5, _sanitize(msg.get("message", "")).strip())
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(_CONTENT_W, 5, _sanitize(msg.get("message", "")).strip(), new_x="LMARGIN", new_y="NEXT")
         pdf.ln(6)
 
     return bytes(pdf.output())
