@@ -313,11 +313,10 @@ def _generate_cover_letter_for_job(title, company, description, cfg, crd, cv_tex
 
 
 def _build_education_block(cfg) -> str:
-    """Build education text from config entries for the CV prompt."""
-    if not cfg.education:
-        return ""
+    """Build education + certifications text from config for the CV/CL prompt."""
     lines = []
-    for e in cfg.education:
+
+    for e in (cfg.education or []):
         if not e.degree:
             continue
         parts = [e.degree]
@@ -325,10 +324,27 @@ def _build_education_block(cfg) -> str:
             parts.append(e.institution)
         if e.year:
             parts.append(e.year)
+        if e.cgpa:
+            parts.append(e.cgpa)
         line = " | ".join(parts)
         if e.details:
             line += f" — {e.details}"
         lines.append(line)
+
+    cert_lines = []
+    for c in (cfg.certifications or []):
+        if not c.name:
+            continue
+        parts = [c.name]
+        if c.issuer:
+            parts.append(c.issuer)
+        if c.year:
+            parts.append(c.year)
+        cert_lines.append(" | ".join(parts))
+
+    if cert_lines:
+        lines.append("Certifications & Achievements: " + "; ".join(cert_lines))
+
     return "\n".join(lines)
 
 
@@ -342,13 +358,15 @@ def _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_text
     edu_block = _build_education_block(cfg)
     if edu_block:
         edu_instruction = (
-            f"EDUCATION\n{edu_block}\n"
-            "[Use EXACTLY the education details above. Do NOT modify, omit, or fabricate education.]"
+            f"EDUCATION & CERTIFICATIONS\n{edu_block}\n"
+            "[Use EXACTLY the education and certification details above. "
+            "Do NOT modify, omit, or fabricate any entry. "
+            "List certifications as a sub-section under EDUCATION.]"
         )
     else:
         edu_instruction = (
             "EDUCATION\n"
-            "[Degree | Institution | Year — ONLY if education details appear in the CV.\n"
+            "[Degree | Institution | Year | CGPA — ONLY if education details appear in the CV.\n"
             "If the CV does not mention education, OMIT this entire section. Never write\n"
             'placeholder text like "Education details not provided".]'
         )
@@ -409,7 +427,8 @@ RULES:
 - Do NOT include candidate name, email, or phone — those are added separately
 - Mirror exact phrases from the job description (e.g. if JD says "go-to-market
   strategy", use that exact phrase, not "GTM" alone)
-- ALWAYS include the EDUCATION section — ATS systems flag CVs missing education
+- ALWAYS include the EDUCATION & CERTIFICATIONS section — ATS systems flag CVs missing education
+- List certifications/achievements as a sub-section or inline under EDUCATION
 
 Job Title: {title}
 Company: {company}
@@ -469,6 +488,24 @@ def render_manual_queue() -> None:
         "Generate cover letters, tailored CVs, and recruiter messages — then download as PDF and apply. "
         "Everything is auto-saved to the database."
     )
+
+    # ── Quick CV download bar (use original PDF as-is on portal) ──
+    _cv_dir_path = _cv_dir()
+    if _cv_dir_path.exists():
+        _orig_cvs = sorted(_cv_dir_path.glob("*.pdf")) + sorted(_cv_dir_path.glob("*.docx")) + sorted(_cv_dir_path.glob("*.doc"))
+        if _orig_cvs:
+            with st.container(border=True):
+                st.caption("**Your CV files** — download and attach directly to portal applications:")
+                dl_cols = st.columns(min(len(_orig_cvs), 4))
+                for _ci, _cv_file in enumerate(_orig_cvs[:4]):
+                    with dl_cols[_ci]:
+                        st.download_button(
+                            f"Download: {_cv_file.stem[:30]}",
+                            data=_cv_file.read_bytes(),
+                            file_name=_cv_file.name,
+                            mime="application/pdf" if _cv_file.suffix.lower() == ".pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            key=f"dl_quick_cv_{_cv_file.stem}",
+                        )
 
     # ── Filters ──
     col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
@@ -1035,9 +1072,16 @@ def render_settings() -> None:
         if existing_cvs:
             st.write("**Current CVs:**")
             for cv_file in existing_cvs:
-                col1, col2 = st.columns([4, 1])
+                col1, col2, col3 = st.columns([4, 1, 1])
                 col1.write(f"- {cv_file.name} ({cv_file.stat().st_size // 1024} KB)")
-                if col2.button("Delete", key=f"del_{cv_file.name}"):
+                col2.download_button(
+                    "Download",
+                    data=cv_file.read_bytes(),
+                    file_name=cv_file.name,
+                    mime="application/pdf" if cv_file.suffix.lower() == ".pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key=f"dl_cv_mgmt_{cv_file.stem}",
+                )
+                if col3.button("Delete", key=f"del_{cv_file.name}"):
                     cv_file.unlink()
                     st.rerun()
         else:
@@ -1061,32 +1105,35 @@ def render_settings() -> None:
     with tab_edu:
         st.subheader("Education Details")
         st.caption(
-            "Add your education here. These details will appear in every generated CV "
+            "Add your education and certifications here. These details appear in every generated CV "
             "and cover letter — no more missing or placeholder education sections."
         )
 
         config = load_config(_config_path())
         existing_edu = config.education or []
+        existing_certs = config.certifications or []
 
         with st.form("education_form"):
+            # ── Degrees / Qualifications ──
+            st.markdown("#### Degrees & Qualifications")
             edu_entries = []
             num_entries = max(len(existing_edu), 1)
 
             for i in range(num_entries):
                 st.markdown(f"**Qualification {i + 1}**")
                 prev = existing_edu[i] if i < len(existing_edu) else None
-                c1, c2, c3 = st.columns([3, 3, 1])
+                c1, c2, c3, c4 = st.columns([3, 3, 1, 1])
                 degree = c1.text_input(
                     "Degree / Qualification",
                     value=prev.degree if prev else "",
                     key=f"edu_deg_{i}",
-                    placeholder="e.g. MBA (Marketing), B.Tech (Computer Science)",
+                    placeholder="e.g. MBA (Marketing)",
                 )
                 institution = c2.text_input(
-                    "Institution",
+                    "College / Institution",
                     value=prev.institution if prev else "",
                     key=f"edu_inst_{i}",
-                    placeholder="e.g. IIM Bangalore, Delhi University",
+                    placeholder="e.g. IIM Bangalore",
                 )
                 year = c3.text_input(
                     "Year",
@@ -1094,27 +1141,82 @@ def render_settings() -> None:
                     key=f"edu_year_{i}",
                     placeholder="2015",
                 )
+                cgpa = c4.text_input(
+                    "CGPA / %",
+                    value=prev.cgpa if prev else "",
+                    key=f"edu_cgpa_{i}",
+                    placeholder="8.5/10",
+                )
                 details = st.text_input(
-                    "Additional details (optional)",
+                    "Achievements / Honours (optional)",
                     value=prev.details if prev else "",
                     key=f"edu_det_{i}",
-                    placeholder="e.g. Gold Medalist, CGPA 8.5/10, Specialization in Finance",
+                    placeholder="e.g. Gold Medalist, Specialization in Finance",
                 )
-                edu_entries.append({"degree": degree, "institution": institution, "year": year, "details": details})
+                edu_entries.append({
+                    "degree": degree, "institution": institution,
+                    "year": year, "cgpa": cgpa, "details": details,
+                })
 
-            add_more = st.checkbox("Add another qualification", key="edu_add_more")
-            if add_more:
+            add_more_edu = st.checkbox("Add another degree / qualification", key="edu_add_more")
+            if add_more_edu:
                 st.markdown(f"**Qualification {num_entries + 1}**")
-                c1, c2, c3 = st.columns([3, 3, 1])
+                c1, c2, c3, c4 = st.columns([3, 3, 1, 1])
                 degree = c1.text_input("Degree / Qualification", key="edu_deg_new", placeholder="e.g. B.Com (Honours)")
-                institution = c2.text_input("Institution", key="edu_inst_new", placeholder="e.g. St. Xavier's College")
+                institution = c2.text_input("College / Institution", key="edu_inst_new", placeholder="e.g. St. Xavier's College")
                 year = c3.text_input("Year", key="edu_year_new", placeholder="2012")
-                details = st.text_input("Additional details (optional)", key="edu_det_new")
-                edu_entries.append({"degree": degree, "institution": institution, "year": year, "details": details})
+                cgpa = c4.text_input("CGPA / %", key="edu_cgpa_new", placeholder="7.8/10")
+                details = st.text_input("Achievements / Honours (optional)", key="edu_det_new")
+                edu_entries.append({
+                    "degree": degree, "institution": institution,
+                    "year": year, "cgpa": cgpa, "details": details,
+                })
 
-            if st.form_submit_button("Save Education", type="primary"):
-                # Filter out empty entries
-                valid_entries = [e for e in edu_entries if e["degree"].strip()]
+            st.divider()
+
+            # ── Certifications & Achievements ──
+            st.markdown("#### Certifications & Achievements")
+            st.caption(
+                "Include professional certifications, executive programmes, olympiad achievements, "
+                "and any other credentials (e.g. IISc Executive Programme, AI National Olympiad)."
+            )
+            cert_entries = []
+            num_certs = max(len(existing_certs), 1)
+
+            for i in range(num_certs):
+                prev_c = existing_certs[i] if i < len(existing_certs) else None
+                c1, c2, c3 = st.columns([4, 3, 1])
+                cert_name = c1.text_input(
+                    "Certification / Achievement",
+                    value=prev_c.name if prev_c else "",
+                    key=f"cert_name_{i}",
+                    placeholder="e.g. Executive Programme in Management",
+                )
+                cert_issuer = c2.text_input(
+                    "Issuing Body",
+                    value=prev_c.issuer if prev_c else "",
+                    key=f"cert_issuer_{i}",
+                    placeholder="e.g. IISc Bangalore",
+                )
+                cert_year = c3.text_input(
+                    "Year",
+                    value=prev_c.year if prev_c else "",
+                    key=f"cert_year_{i}",
+                    placeholder="2023",
+                )
+                cert_entries.append({"name": cert_name, "issuer": cert_issuer, "year": cert_year})
+
+            add_more_cert = st.checkbox("Add another certification / achievement", key="cert_add_more")
+            if add_more_cert:
+                c1, c2, c3 = st.columns([4, 3, 1])
+                cert_name = c1.text_input("Certification / Achievement", key="cert_name_new", placeholder="e.g. AI National Olympiad — Top 100")
+                cert_issuer = c2.text_input("Issuing Body", key="cert_issuer_new", placeholder="e.g. NASSCOM / Govt of India")
+                cert_year = c3.text_input("Year", key="cert_year_new", placeholder="2024")
+                cert_entries.append({"name": cert_name, "issuer": cert_issuer, "year": cert_year})
+
+            if st.form_submit_button("Save Education & Certifications", type="primary"):
+                valid_edu = [e for e in edu_entries if e["degree"].strip()]
+                valid_certs = [c for c in cert_entries if c["name"].strip()]
 
                 if _config_path().exists():
                     with open(_config_path()) as f:
@@ -1122,24 +1224,41 @@ def render_settings() -> None:
                 else:
                     raw = {}
 
-                raw["education"] = valid_entries
+                raw["education"] = valid_edu
+                raw["certifications"] = valid_certs
 
                 with open(_config_path(), "w") as f:
                     yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
 
-                st.success(f"Saved {len(valid_entries)} education entries!")
-                if valid_entries:
-                    st.info("Your education will now appear in all generated CVs and cover letters.")
+                st.success(f"Saved {len(valid_edu)} education entries and {len(valid_certs)} certifications!")
+                st.info("These will appear in all generated CVs and cover letters.")
                 st.rerun()
 
-        if existing_edu:
+        if existing_edu or existing_certs:
             st.divider()
-            st.markdown("**Current education on file:**")
-            for e in existing_edu:
-                parts = [e.degree, e.institution]
-                if e.year:
-                    parts.append(e.year)
-                st.markdown(f"- {' | '.join(parts)}" + (f" — {e.details}" if e.details else ""))
+            if existing_edu:
+                st.markdown("**Education on file:**")
+                for e in existing_edu:
+                    parts = [e.degree]
+                    if e.institution:
+                        parts.append(e.institution)
+                    if e.year:
+                        parts.append(e.year)
+                    line = " | ".join(parts)
+                    if e.cgpa:
+                        line += f" | {e.cgpa}"
+                    if e.details:
+                        line += f" — {e.details}"
+                    st.markdown(f"- {line}")
+            if existing_certs:
+                st.markdown("**Certifications on file:**")
+                for c in existing_certs:
+                    parts = [c.name]
+                    if c.issuer:
+                        parts.append(c.issuer)
+                    if c.year:
+                        parts.append(c.year)
+                    st.markdown(f"- {' | '.join(parts)}")
 
     # ── Credentials ──
     with tab_creds:
