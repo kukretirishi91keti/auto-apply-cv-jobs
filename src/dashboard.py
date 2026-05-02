@@ -317,21 +317,29 @@ def _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_text
     if not cv_text:
         return ""
     client = anthropic.Anthropic(api_key=crd.anthropic_api_key)
-    prompt = f"""You are a senior career coach creating a tailored CV for a job application.
+    prompt = f"""You are a senior career coach creating an ATS-optimized tailored CV.
 
 CRITICAL: You must ONLY use companies, roles, dates, and achievements that appear in the
 candidate's actual CV below. Do NOT invent, fabricate, or hallucinate any experience,
 company names, job titles, or achievements. If the CV only has one employer, only list
 that one employer. Never add fictional previous roles.
 
+ATS OPTIMIZATION — most companies use Applicant Tracking Systems that scan CVs for:
+1. EXACT keyword matches from the job description — mirror them verbatim
+2. Standard section headers (PROFESSIONAL SUMMARY, PROFESSIONAL EXPERIENCE, EDUCATION, SKILLS)
+3. Job-title and skill-term density — repeat key terms naturally 2-3 times across sections
+4. Measurable achievements with numbers (%, Rs., Cr, revenue, growth, team size)
+
 OUTPUT FORMAT — use this exact structure with ALL CAPS section headers:
 
 PROFESSIONAL SUMMARY
-[4-5 lines directly addressing this role. Mention total years of experience, current
-company and role, and 3-4 key skills relevant to the target job. Be specific.]
+[4-5 lines. Open with exact target job title + total years. Weave in 5-6 keywords
+directly from the job description. Mention current company and role. Be specific.]
 
 CORE COMPETENCIES
-[12-15 most relevant skills separated by " | " on 2-3 lines]
+[12-15 skills separated by " | " on 2-3 lines. Pull terms DIRECTLY from the job
+description first, then add the candidate's strongest skills. This section is the
+primary ATS keyword match zone.]
 
 PROFESSIONAL EXPERIENCE
 [Company Name | Role Title | Duration — ONLY from the actual CV]
@@ -340,22 +348,26 @@ PROFESSIONAL EXPERIENCE
 - [Achievement bullet with metrics]
 - [Achievement bullet with metrics]
 [Include ALL roles from the actual CV, with 3-5 bullets each. Reframe bullets
-to emphasize relevance to the target job, but never change the facts.]
+to emphasize relevance to the target job, but never change the facts.
+Naturally embed job description keywords into bullet text where truthful.]
 
 KEY ACHIEVEMENTS
 - [Top 5-6 measurable achievements most relevant to this job — ONLY from the CV]
 
-WHY I'M A FIT
-- [2-3 bullet points mapping specific CV experience to job requirements]
+EDUCATION
+[Degree | Institution | Year — from the CV. Include certifications if any.]
 
 RULES:
 - Output ONLY the CV text — no commentary, no preamble, no markdown bold (**)
-- Use ALL CAPS for section headers
+- Use ALL CAPS for section headers (ATS parsers rely on standard headers)
 - Use " | " to separate items in skill lists and job title lines
 - Each bullet must start with "- " and include a metric (%, Rs., Cr, number)
 - Target 500-600 words (full 1 page when formatted as PDF)
 - NEVER fabricate companies, roles, or achievements not in the candidate's CV
 - Do NOT include candidate name, email, or phone — those are added separately
+- Mirror exact phrases from the job description (e.g. if JD says "go-to-market
+  strategy", use that exact phrase, not "GTM" alone)
+- Include EDUCATION section — ATS systems flag CVs missing education
 
 Job Title: {title}
 Company: {company}

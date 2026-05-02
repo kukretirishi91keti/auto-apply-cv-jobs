@@ -42,38 +42,59 @@ class _BasePDF(FPDF):
 
     def __init__(self) -> None:
         super().__init__()
-        self.set_auto_page_break(auto=True, margin=20)
-        self.set_margins(_MARGIN, 15, _MARGIN)
+        self.set_auto_page_break(auto=True, margin=15)
+        self.set_margins(_MARGIN, 12, _MARGIN)
+
+    def _section_fits(self, body: str, min_lines: int = 3) -> bool:
+        """Check if section header + first few body lines fit on this page."""
+        header_h = 8
+        line_h = 4.5
+        needed = header_h + (min_lines * line_h)
+        return not self.will_page_break(needed)
 
     def _write_section(self, title: str, body: str) -> None:
+        if not self._section_fits(body):
+            self.add_page()
+
         self.set_font(_FONT, "B", 10.5)
         self.set_text_color(30, 60, 110)
         self.cell(0, 6, _sanitize(title.upper()), new_x="LMARGIN", new_y="NEXT")
         self.set_draw_color(30, 60, 110)
         self.line(self.x, self.y, self.x + _CONTENT_W, self.y)
-        self.ln(2)
+        self.ln(1.5)
 
         self.set_font(_FONT, "", 9.5)
         self.set_text_color(40, 40, 40)
-        for line in _sanitize(body).strip().split("\n"):
+        lines = _sanitize(body).strip().split("\n")
+        for i, line in enumerate(lines):
             line = line.strip()
             if not line:
-                self.ln(2)
+                self.ln(1.5)
                 continue
-            # Detect sub-headers (bold lines like "Company Name | Role | Date")
-            if "|" in line and not line.startswith(("- ", "* ")) and len(line) < 120:
+
+            is_subheader = "|" in line and not line.startswith(("- ", "* ")) and len(line) < 120
+            is_bullet = line.startswith(("- ", "* "))
+
+            # Prevent orphan: if this is a sub-header or last line of a section,
+            # and it would land alone on a new page, pull it to the next page
+            # along with a few following lines
+            if is_subheader:
+                following_lines = min(3, len(lines) - i - 1)
+                needed = 5 + (following_lines * 4.5)
+                if self.will_page_break(needed):
+                    self.add_page()
                 self.set_font(_FONT, "B", 9.5)
                 self.set_text_color(50, 50, 50)
-                self.multi_cell(_CONTENT_W, 5, line)
+                self.multi_cell(_CONTENT_W, 4.5, line)
                 self.set_font(_FONT, "", 9.5)
                 self.set_text_color(40, 40, 40)
-            elif line.startswith(("- ", "* ")):
+            elif is_bullet:
                 self.set_x(_MARGIN + 4)
                 bullet_text = line.lstrip("-* ").strip()
                 self.multi_cell(_CONTENT_W - 4, 4.5, f"  -  {bullet_text}")
             else:
                 self.multi_cell(_CONTENT_W, 4.5, line)
-        self.ln(3)
+        self.ln(2.5)
 
 
 def generate_cover_letter_pdf(
@@ -127,40 +148,54 @@ def generate_tailored_cv_pdf(
     """Generate a professional tailored CV PDF.
 
     Parses section headers (lines ending with : or ALL CAPS lines) and
-    bullet points to create structured formatting.
+    bullet points to create structured formatting. Uses compact spacing
+    to avoid orphan lines spilling onto the next page.
 
     Returns PDF as bytes.
     """
-    pdf = _BasePDF()
-    pdf.add_page()
-
-    # Header — compact name block
-    if candidate_name:
-        pdf.set_font(_FONT, "B", 16)
-        pdf.set_text_color(30, 60, 110)
-        pdf.cell(0, 8, candidate_name, new_x="LMARGIN", new_y="NEXT", align="C")
-
-    if contact_info:
-        pdf.set_font(_FONT, "", 8.5)
-        pdf.set_text_color(80, 80, 80)
-        pdf.cell(0, 4, _sanitize(contact_info), new_x="LMARGIN", new_y="NEXT", align="C")
-
-    if candidate_name or contact_info:
-        pdf.set_draw_color(30, 60, 110)
-        pdf.line(_MARGIN, pdf.y + 1, _PAGE_W - _MARGIN, pdf.y + 1)
-        pdf.ln(4)
-
-    # Parse and render sections
     sections = _parse_cv_sections(tailored_cv_text)
 
-    for title, body in sections:
-        if title:
-            pdf._write_section(title, body)
-        else:
-            pdf.set_font(_FONT, "", 9.5)
-            pdf.set_text_color(40, 40, 40)
-            pdf.multi_cell(_CONTENT_W, 4.5, _sanitize(body).strip())
+    # Try standard spacing first; if it overflows to 2+ pages and the
+    # overflow is small (< 30% of page 2), retry with tighter spacing.
+    for attempt, spacing in enumerate([(4.5, 2.5, 1.5), (4.0, 2.0, 1.0)]):
+        line_h, section_gap, blank_gap = spacing
+        pdf = _BasePDF()
+        if attempt > 0:
+            pdf.set_auto_page_break(auto=True, margin=12)
+            pdf.set_margins(_MARGIN, 10, _MARGIN)
+        pdf.add_page()
+
+        if candidate_name:
+            pdf.set_font(_FONT, "B", 16)
+            pdf.set_text_color(30, 60, 110)
+            pdf.cell(0, 8, candidate_name, new_x="LMARGIN", new_y="NEXT", align="C")
+
+        if contact_info:
+            pdf.set_font(_FONT, "", 8.5)
+            pdf.set_text_color(80, 80, 80)
+            pdf.cell(0, 4, _sanitize(contact_info), new_x="LMARGIN", new_y="NEXT", align="C")
+
+        if candidate_name or contact_info:
+            pdf.set_draw_color(30, 60, 110)
+            pdf.line(_MARGIN, pdf.y + 1, _PAGE_W - _MARGIN, pdf.y + 1)
             pdf.ln(3)
+
+        for title, body in sections:
+            if title:
+                pdf._write_section(title, body)
+            else:
+                pdf.set_font(_FONT, "", 9.5)
+                pdf.set_text_color(40, 40, 40)
+                pdf.multi_cell(_CONTENT_W, line_h, _sanitize(body).strip())
+                pdf.ln(section_gap)
+
+        # If it fits on 1 page, or if this is already the compact attempt, use it
+        if pdf.page == 1 or attempt == 1:
+            break
+        # If page 2 has significant content (> 30% used), keep multi-page
+        page2_usage = (pdf.get_y() - pdf.t_margin) / (pdf.h - pdf.t_margin - pdf.b_margin)
+        if page2_usage > 0.30:
+            break
 
     return bytes(pdf.output())
 
