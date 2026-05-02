@@ -131,7 +131,10 @@ def ai_score_job(
 STRICT RULES:
 - Score 0.3 or below if the role is junior/entry-level and the candidate has {exp_years}+ years
 - Score 0.3 or below if the role is in a completely unrelated industry/domain
-- Score 0.3 or below if the job is in a different country unless explicitly marked "Remote"
+- GEOGRAPHY: The candidate is based in INDIA. Score 0.3 or below if the job is based in
+  USA, Europe, or any country outside India — UNLESS the job description explicitly says
+  "Remote - Worldwide", "Remote - India", or similar global remote policy. A US company
+  listing as "Remote" without specifying international eligibility should score 0.3.
 - Score 0.5-0.7 if there's partial overlap in domain or transferable skills
 - Score 0.7+ ONLY if the role level, domain, AND skills are directly relevant
 
@@ -139,7 +142,7 @@ Consider:
 - Role level alignment — a {exp_years}-year candidate should NOT match Associate/Junior roles
 - Industry/domain overlap (BFSI, FinTech, Insurance, Marketing, Product, Growth)
 - Skills and experience relevance
-- Location relevance (India-based candidate)
+- Location: candidate is in India. US-only, Europe-only roles score 0.3 even if "Remote"
 
 Job Title: {job_title}
 Job Description:

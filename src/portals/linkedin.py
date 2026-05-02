@@ -62,6 +62,7 @@ class LinkedInPortal(BasePortal):
         """Search LinkedIn per keyword + location via public guest page."""
         all_jobs: list[JobListing] = []
         seen_ids: set[str] = set()
+        seen_title_company: set[tuple[str, str]] = set()
 
         terms = self.get_search_terms(max_terms=10)
         if not terms:
@@ -75,8 +76,10 @@ class LinkedInPortal(BasePortal):
                 try:
                     jobs = await self._search_keyword(keyword, location)
                     for job in jobs:
-                        if job.external_id not in seen_ids:
+                        dedup_key = (job.title.lower().strip(), job.company.lower().strip())
+                        if job.external_id not in seen_ids and dedup_key not in seen_title_company:
                             seen_ids.add(job.external_id)
+                            seen_title_company.add(dedup_key)
                             all_jobs.append(job)
                 except Exception as e:
                     self.logger.warning("LinkedIn search failed for '%s' in '%s': %s", keyword, location, e)

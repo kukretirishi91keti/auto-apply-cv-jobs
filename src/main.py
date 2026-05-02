@@ -104,6 +104,14 @@ async def process_portal(
         applied_count = 0
         can_auto_apply = portal_name in AUTO_APPLY_PORTALS and portal_config.auto_apply
 
+        # Pre-sort: score all jobs by keyword match (free/instant), then process
+        # best keyword matches first so AI budget is spent on most promising jobs
+        from src.job_matcher import keyword_score as _kw_score
+        jobs.sort(
+            key=lambda j: _kw_score(j.title, j.description, config.search.keywords),
+            reverse=True,
+        )
+
         for job in jobs:
             # Check daily limit
             total_today = get_today_application_count()

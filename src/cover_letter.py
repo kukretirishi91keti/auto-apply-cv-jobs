@@ -18,11 +18,20 @@ def generate_cover_letter(
     cv_text: str,
     config: AppConfig,
     creds: Credentials,
+    candidate_name: str = "",
 ) -> str:
     """Generate a tailored cover letter using Claude."""
+    name_line = ""
+    if candidate_name:
+        name_line = f"\nCandidate Name: {candidate_name}"
+    else:
+        name_line = "\nSign off with the candidate's name from the CV (never use '[Candidate Name]')."
+
     prompt = f"""Write a concise, professional cover letter for this job application.
 Keep it under 250 words. Be specific about how the candidate's experience matches the role.
 Do NOT use generic filler — reference actual skills from the CV that match the job.
+Do NOT use placeholders like [Candidate Name] or [Your Name] — use the actual name.
+{name_line}
 
 Job Title: {job_title}
 Company: {company}
