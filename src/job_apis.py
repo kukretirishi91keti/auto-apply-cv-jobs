@@ -423,24 +423,39 @@ async def aggregator_search(
             except Exception as e:
                 logger.warning("Adzuna failed for '%s': %s", term, e)
 
-    # Free remote job sources (no API key needed)
+    # Free remote job sources — skip for non-tech keywords (they only list
+    # engineering/design roles and return 0 results for marketing/BFSI terms)
     if include_remote:
-        for term in terms[:3]:  # limit to top 3 terms for free APIs
-            try:
-                jobs = await remoteok_search(term)
-                added = _add_jobs(jobs)
-                if added:
-                    logger.info("RemoteOK added %d jobs for '%s'", added, term)
-            except Exception as e:
-                logger.warning("RemoteOK failed for '%s': %s", term, e)
+        remoteok_disabled = False
+        wwr_disabled = False
+        for term in terms[:3]:
+            if remoteok_disabled and wwr_disabled:
+                break
+            if not remoteok_disabled:
+                try:
+                    jobs = await remoteok_search(term)
+                    added = _add_jobs(jobs)
+                    if added:
+                        logger.info("RemoteOK added %d jobs for '%s'", added, term)
+                    elif term == terms[0]:
+                        remoteok_disabled = True
+                        logger.info("RemoteOK returned 0 on first term — skipping remaining")
+                except Exception as e:
+                    logger.warning("RemoteOK failed for '%s': %s", term, e)
+                    remoteok_disabled = True
 
-            try:
-                jobs = await weworkremotely_search(term)
-                added = _add_jobs(jobs)
-                if added:
-                    logger.info("WeWorkRemotely added %d jobs for '%s'", added, term)
-            except Exception as e:
-                logger.warning("WeWorkRemotely failed for '%s': %s", term, e)
+            if not wwr_disabled:
+                try:
+                    jobs = await weworkremotely_search(term)
+                    added = _add_jobs(jobs)
+                    if added:
+                        logger.info("WeWorkRemotely added %d jobs for '%s'", added, term)
+                    elif term == terms[0]:
+                        wwr_disabled = True
+                        logger.info("WeWorkRemotely returned 0 on first term — skipping remaining")
+                except Exception as e:
+                    logger.warning("WeWorkRemotely failed for '%s': %s", term, e)
+                    wwr_disabled = True
 
     logger.info("Aggregator total: %d unique jobs from %d terms (sources: %s)",
                 len(all_jobs), min(len(terms), max_terms),

@@ -192,6 +192,30 @@ _JUNIOR_TITLE_PATTERNS = [
     "junior", "associate analyst", "graduate trainee",
 ]
 
+_NON_INDIA_LOCATIONS = [
+    "united states", "usa", ", us", "new york", "san francisco",
+    "los angeles", "chicago", "boston", "seattle", "austin", "denver",
+    "atlanta", "miami", "dallas", "houston", "phoenix", "portland",
+    "san diego", "philadelphia", "washington dc", "washington, dc",
+    "california", "texas", "florida", "illinois", "colorado",
+    "united kingdom", ", uk", "london", "manchester", "berlin",
+    "paris", "amsterdam", "toronto", "vancouver", "sydney",
+    "melbourne", "singapore", "hong kong", "tokyo", "dubai",
+]
+
+
+def _is_non_india_location(location: str) -> bool:
+    """Quick check: reject jobs with clearly non-India locations."""
+    if not location:
+        return False
+    loc_lower = location.lower()
+    india_hints = ["india", "bangalore", "bengaluru", "mumbai", "delhi",
+                   "hyderabad", "chennai", "pune", "gurugram", "gurgaon",
+                   "noida", "kolkata", "ahmedabad", "jaipur"]
+    if any(h in loc_lower for h in india_hints):
+        return False
+    return any(p in loc_lower for p in _NON_INDIA_LOCATIONS)
+
 
 def _is_seniority_mismatch(job_title: str, experience_years: int) -> bool:
     """Quick check: reject obviously junior roles for senior candidates."""
@@ -207,11 +231,17 @@ def match_job(
     cv_texts: dict[str, str],
     config: AppConfig,
     creds: Credentials,
+    job_location: str = "",
 ) -> MatchResult:
     """Run two-stage matching pipeline."""
-    # Stage 0: Seniority filter (free, instant)
+    # Stage 0a: Seniority filter (free, instant)
     if _is_seniority_mismatch(job_title, config.search.experience_years):
         logger.debug("Job '%s' rejected — junior title for %d-year candidate", job_title, config.search.experience_years)
+        return MatchResult(keyword_score=0.0, should_apply=False)
+
+    # Stage 0b: Location filter (free, instant) — skip obviously non-India jobs
+    if _is_non_india_location(job_location):
+        logger.debug("Job '%s' rejected — non-India location: %s", job_title, job_location)
         return MatchResult(keyword_score=0.0, should_apply=False)
 
     # Stage 1: Keyword filter

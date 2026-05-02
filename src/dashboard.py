@@ -361,7 +361,9 @@ KEY ACHIEVEMENTS
 - [Top 5-6 measurable achievements most relevant to this job — ONLY from the CV]
 
 EDUCATION
-[Degree | Institution | Year — from the CV. Include certifications if any.]
+[Degree | Institution | Year — ONLY if education details appear in the CV.
+If the CV does not mention education, OMIT this entire section. Never write
+placeholder text like "Education details not provided".]
 
 RULES:
 - Output ONLY the CV text — no commentary, no preamble, no markdown bold (**)
