@@ -398,16 +398,22 @@ async def aggregator_search(
                 added += 1
         return added
 
+    jsearch_disabled = False
     for i, term in enumerate(terms[:max_terms]):
-        # JSearch
-        if has_jsearch:
+        # JSearch — skip all remaining calls once rate-limited
+        if has_jsearch and not jsearch_disabled:
             try:
                 if i > 0:
                     await asyncio.sleep(1.5)
                 jobs = await jsearch_search(term, location, rapidapi_key=rapidapi_key)
-                _add_jobs(jobs)
+                if not jobs and i == 0:
+                    jsearch_disabled = True
+                    logger.info("JSearch returned 0 results on first call — skipping remaining terms")
+                else:
+                    _add_jobs(jobs)
             except Exception as e:
                 logger.warning("JSearch failed for '%s': %s", term, e)
+                jsearch_disabled = True
 
         # Adzuna
         if has_adzuna:

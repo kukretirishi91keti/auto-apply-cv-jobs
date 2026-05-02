@@ -319,8 +319,8 @@ def get_manual_apply_queue() -> list[sqlite3.Row]:
     with get_connection() as conn:
         return conn.execute(
             """SELECT j.id AS job_id, j.title, j.company, j.location, j.portal,
-                      j.url, j.salary, j.keyword_score, j.ai_score, j.discovered_at,
-                      a.status AS app_status
+                      j.url, j.salary, j.description, j.keyword_score, j.ai_score,
+                      j.discovered_at, a.status AS app_status
                FROM jobs j
                LEFT JOIN applications a ON j.id = a.job_id
                WHERE j.portal IN ('linkedin', 'glassdoor')
