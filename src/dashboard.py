@@ -312,12 +312,47 @@ def _generate_cover_letter_for_job(title, company, description, cfg, crd, cv_tex
     return generate_cover_letter(title, company, description or "", cv_text, cfg, crd, candidate_name=clean_name)
 
 
+def _build_education_block(cfg) -> str:
+    """Build education text from config entries for the CV prompt."""
+    if not cfg.education:
+        return ""
+    lines = []
+    for e in cfg.education:
+        if not e.degree:
+            continue
+        parts = [e.degree]
+        if e.institution:
+            parts.append(e.institution)
+        if e.year:
+            parts.append(e.year)
+        line = " | ".join(parts)
+        if e.details:
+            line += f" — {e.details}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_texts):
     """Generate a tailored CV for a specific job."""
     import anthropic
     cv_text = next(iter(cv_texts.values()), "")
     if not cv_text:
         return ""
+
+    edu_block = _build_education_block(cfg)
+    if edu_block:
+        edu_instruction = (
+            f"EDUCATION\n{edu_block}\n"
+            "[Use EXACTLY the education details above. Do NOT modify, omit, or fabricate education.]"
+        )
+    else:
+        edu_instruction = (
+            "EDUCATION\n"
+            "[Degree | Institution | Year — ONLY if education details appear in the CV.\n"
+            "If the CV does not mention education, OMIT this entire section. Never write\n"
+            'placeholder text like "Education details not provided".]'
+        )
+
     client = anthropic.Anthropic(api_key=crd.anthropic_api_key)
     prompt = f"""You are a senior career coach creating an ATS-optimized tailored CV.
 
@@ -360,10 +395,7 @@ Naturally embed job description keywords into bullet text where truthful.]
 KEY ACHIEVEMENTS
 - [Top 5-6 measurable achievements most relevant to this job — ONLY from the CV]
 
-EDUCATION
-[Degree | Institution | Year — ONLY if education details appear in the CV.
-If the CV does not mention education, OMIT this entire section. Never write
-placeholder text like "Education details not provided".]
+{edu_instruction}
 
 RULES:
 - Output ONLY the CV text — no commentary, no preamble, no markdown bold (**)
@@ -377,7 +409,7 @@ RULES:
 - Do NOT include candidate name, email, or phone — those are added separately
 - Mirror exact phrases from the job description (e.g. if JD says "go-to-market
   strategy", use that exact phrase, not "GTM" alone)
-- Include EDUCATION section — ATS systems flag CVs missing education
+- ALWAYS include the EDUCATION section — ATS systems flag CVs missing education
 
 Job Title: {title}
 Company: {company}
@@ -982,8 +1014,8 @@ def render_settings() -> None:
     st.header("Settings")
 
     # ── Tab layout ──
-    tab_cv, tab_creds, tab_search, tab_portals = st.tabs([
-        "CV Management", "Credentials", "Search Preferences", "Portal Config",
+    tab_cv, tab_edu, tab_creds, tab_search, tab_portals = st.tabs([
+        "CV Management", "Education", "Credentials", "Search Preferences", "Portal Config",
     ])
 
     # ── CV Management ──
@@ -1024,6 +1056,90 @@ def render_settings() -> None:
                 st.success(f"Uploaded: {f.name}")
 
             st.success("CVs will be auto-detected on next run. No config needed!")
+
+    # ── Education ──
+    with tab_edu:
+        st.subheader("Education Details")
+        st.caption(
+            "Add your education here. These details will appear in every generated CV "
+            "and cover letter — no more missing or placeholder education sections."
+        )
+
+        config = load_config(_config_path())
+        existing_edu = config.education or []
+
+        with st.form("education_form"):
+            edu_entries = []
+            num_entries = max(len(existing_edu), 1)
+
+            for i in range(num_entries):
+                st.markdown(f"**Qualification {i + 1}**")
+                prev = existing_edu[i] if i < len(existing_edu) else None
+                c1, c2, c3 = st.columns([3, 3, 1])
+                degree = c1.text_input(
+                    "Degree / Qualification",
+                    value=prev.degree if prev else "",
+                    key=f"edu_deg_{i}",
+                    placeholder="e.g. MBA (Marketing), B.Tech (Computer Science)",
+                )
+                institution = c2.text_input(
+                    "Institution",
+                    value=prev.institution if prev else "",
+                    key=f"edu_inst_{i}",
+                    placeholder="e.g. IIM Bangalore, Delhi University",
+                )
+                year = c3.text_input(
+                    "Year",
+                    value=prev.year if prev else "",
+                    key=f"edu_year_{i}",
+                    placeholder="2015",
+                )
+                details = st.text_input(
+                    "Additional details (optional)",
+                    value=prev.details if prev else "",
+                    key=f"edu_det_{i}",
+                    placeholder="e.g. Gold Medalist, CGPA 8.5/10, Specialization in Finance",
+                )
+                edu_entries.append({"degree": degree, "institution": institution, "year": year, "details": details})
+
+            add_more = st.checkbox("Add another qualification", key="edu_add_more")
+            if add_more:
+                st.markdown(f"**Qualification {num_entries + 1}**")
+                c1, c2, c3 = st.columns([3, 3, 1])
+                degree = c1.text_input("Degree / Qualification", key="edu_deg_new", placeholder="e.g. B.Com (Honours)")
+                institution = c2.text_input("Institution", key="edu_inst_new", placeholder="e.g. St. Xavier's College")
+                year = c3.text_input("Year", key="edu_year_new", placeholder="2012")
+                details = st.text_input("Additional details (optional)", key="edu_det_new")
+                edu_entries.append({"degree": degree, "institution": institution, "year": year, "details": details})
+
+            if st.form_submit_button("Save Education", type="primary"):
+                # Filter out empty entries
+                valid_entries = [e for e in edu_entries if e["degree"].strip()]
+
+                if _config_path().exists():
+                    with open(_config_path()) as f:
+                        raw = yaml.safe_load(f) or {}
+                else:
+                    raw = {}
+
+                raw["education"] = valid_entries
+
+                with open(_config_path(), "w") as f:
+                    yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
+
+                st.success(f"Saved {len(valid_entries)} education entries!")
+                if valid_entries:
+                    st.info("Your education will now appear in all generated CVs and cover letters.")
+                st.rerun()
+
+        if existing_edu:
+            st.divider()
+            st.markdown("**Current education on file:**")
+            for e in existing_edu:
+                parts = [e.degree, e.institution]
+                if e.year:
+                    parts.append(e.year)
+                st.markdown(f"- {' | '.join(parts)}" + (f" — {e.details}" if e.details else ""))
 
     # ── Credentials ──
     with tab_creds:

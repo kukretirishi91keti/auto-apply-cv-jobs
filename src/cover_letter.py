@@ -27,13 +27,25 @@ def generate_cover_letter(
     else:
         name_line = "\nSign off with the candidate's name from the CV (never use '[Candidate Name]')."
 
+    edu_line = ""
+    if config.education:
+        edu_parts = []
+        for e in config.education:
+            if e.degree:
+                parts = [e.degree]
+                if e.institution:
+                    parts.append(e.institution)
+                edu_parts.append(" from ".join(parts))
+        if edu_parts:
+            edu_line = f"\nCandidate Education: {'; '.join(edu_parts)}"
+
     prompt = f"""Write a concise, professional cover letter for this job application.
 Keep it under 250 words. Be specific about how the candidate's experience matches the role.
 Do NOT use generic filler — reference actual skills from the CV that match the job.
 Do NOT use placeholders like [Candidate Name] or [Your Name] — use the actual name.
 Do NOT mention specific number of years of experience (e.g. "8 years", "10+ years").
 Instead use phrases like "extensive experience" or "proven track record".
-{name_line}
+{name_line}{edu_line}
 
 Job Title: {job_title}
 Company: {company}
