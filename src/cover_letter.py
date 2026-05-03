@@ -59,6 +59,13 @@ Do NOT use generic filler — reference actual skills from the CV that match the
 Do NOT use placeholders like [Candidate Name] or [Your Name] — use the actual name.
 Do NOT mention specific number of years of experience (e.g. "8 years", "10+ years").
 Instead use phrases like "extensive experience" or "proven track record".
+
+SALUTATION RULE: Address as "Dear [Company Name] Hiring Team," — use the actual company
+name, never write "Dear Hiring Manager," or "To Whom It May Concern,".
+
+METRIC RULE: Express all growth as multipliers, never "from X to Y" ranges.
+Example: "scaled media spends 15X in 4 years" not "from Rs. 30L to Rs. 5 Cr".
+Totals and destinations are fine as-is (e.g. "drove Rs. 500 Cr AUM", "40,000 leads").
 {name_line}{edu_line}{cert_line}
 
 Job Title: {job_title}

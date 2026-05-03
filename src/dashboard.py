@@ -408,18 +408,38 @@ PROFESSIONAL EXPERIENCE
 - [Achievement bullet with metrics]
 [Include ALL roles from the actual CV, with 3-5 bullets each. Reframe bullets
 to emphasize relevance to the target job, but never change the facts.
-Naturally embed job description keywords into bullet text where truthful.]
+Naturally embed job description keywords into bullet text where truthful.
+LABEL each bullet you use here as USED — they must NOT appear again in KEY ACHIEVEMENTS.]
 
 KEY ACHIEVEMENTS
-- [Top 5-6 measurable achievements most relevant to this job — ONLY from the CV]
+[Pick the 5-6 most impressive ADDITIONAL achievements from the CV that are NOT already
+listed in PROFESSIONAL EXPERIENCE above. These must be DIFFERENT bullets — not repeats.
+If the CV has achievements from multiple domains (e.g. brand, digital, product, P&L),
+spread across domains to show breadth. Prioritise whichever domain is most relevant
+to this specific job description. Every bullet must include a metric.]
+- [Different achievement not in experience section]
+- [Different achievement not in experience section]
+- [Different achievement not in experience section]
+- [Different achievement not in experience section]
+- [Different achievement not in experience section]
 
 {edu_instruction}
+
+METRIC EXPRESSION RULE — CRITICAL:
+Express all growth achievements as MULTIPLIERS or RATIOS, never as "from X to Y" ranges.
+- "from 40% to 74%" → "1.7X improvement" or "increased 1.7X"
+- "from Rs. 30 Lacs to Rs. 5 Crores" → "scaled 15X" or "grew media spends 15-fold"
+- "from Rs. 200 Cr to Rs. 1,100 Cr" → "grew 5.5X"
+- "from 10 to 35" → "improved 3.5X"
+- "40,000+ leads in 30 days" stays as-is — it is a destination/output, not a range
+- "Rs. 1,500 Crores revenue" stays as-is — it is a total, not a range
+- RULE: if the CV says "from A to B", compute B/A and write "NX" — never write both A and B
 
 RULES:
 - Output ONLY the CV text — no commentary, no preamble, no markdown bold (**)
 - Use ALL CAPS for section headers (ATS parsers rely on standard headers)
 - Use " | " to separate items in skill lists and job title lines
-- Each bullet must start with "- " and include a metric (%, Rs., Cr, number)
+- Each bullet must start with "- " and include a metric (multiplier, Rs., Cr, or count)
 - Target 500-600 words (full 1 page when formatted as PDF)
 - NEVER mention specific number of years of experience (e.g. "10 years", "8+ years")
   Instead use "Seasoned professional" or "Extensive experience" — let the CV speak for itself
