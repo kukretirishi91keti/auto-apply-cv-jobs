@@ -22,6 +22,7 @@ from src.db import (
     get_manual_apply_queue,
     get_cloud_apply_queue,
     mark_manually_applied,
+    unmark_applied,
     save_generated_content,
     get_generated_content,
     get_daily_stats,
@@ -301,7 +302,8 @@ def _load_cv_and_config():
     return cfg, crd, cv_texts
 
 
-def _generate_cover_letter_for_job(title, company, description, cfg, crd, cv_texts):
+def _generate_cover_letter_for_job(title, company, description, cfg, crd, cv_texts,
+                                    domain_emphasis=None, extra_context=""):
     """Generate a cover letter for a specific job."""
     from src.cover_letter import generate_cover_letter
     cv_text = next(iter(cv_texts.values()), "")
@@ -309,7 +311,12 @@ def _generate_cover_letter_for_job(title, company, description, cfg, crd, cv_tex
         return ""
     user_name = st.session_state.get("user_name", "")
     clean_name = re.sub(r"\.(pdf|docx?|txt)$", "", user_name, flags=re.IGNORECASE).strip()
-    return generate_cover_letter(title, company, description or "", cv_text, cfg, crd, candidate_name=clean_name)
+    return generate_cover_letter(
+        title, company, description or "", cv_text, cfg, crd,
+        candidate_name=clean_name,
+        domain_emphasis=domain_emphasis or [],
+        extra_context=extra_context,
+    )
 
 
 def _build_education_block(cfg) -> str:
@@ -348,7 +355,93 @@ def _build_education_block(cfg) -> str:
     return "\n".join(lines)
 
 
-def _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_texts):
+_DOMAIN_DETAILS = {
+    "Brand": (
+        "Brand Marketing / Campaign Management: brand-building, ATL/BTL campaigns, "
+        "positioning strategy, consumer insights, brand equity, media planning, launch campaigns"
+    ),
+    "Digital / AI": (
+        "Digital Marketing & AI/Automation: digital campaigns, programmatic advertising, "
+        "marketing automation, AI tools used, MarTech stack, performance marketing, "
+        "data analytics, content automation, AI-driven targeting"
+    ),
+    "Content": (
+        "Content Marketing / Volume Expansion: content strategy, content production at scale, "
+        "organic growth, distribution, SEO, social media management, creator programs, "
+        "editorial planning, community growth"
+    ),
+    "Trade Marketing": (
+        "Trade Marketing / BTL Activation: trade spend management, retailer programs, "
+        "in-store visibility, activations, channel partner programs, shopper marketing"
+    ),
+    "P&L / Revenue": (
+        "P&L Management / Revenue Growth: revenue ownership, cost optimization, market share, "
+        "profitability, business growth, efficiency improvements, budget management"
+    ),
+}
+
+
+def _analyze_jd_for_recommendations(description: str, cv_text: str,
+                                     ai_score, kw_score) -> dict:
+    """Quick (no-API) analysis of JD vs CV to surface recommendation inputs."""
+    desc_lower = (description or "").lower()
+    cv_lower = (cv_text or "").lower()
+
+    domain_signals = {
+        "Brand": ["brand", "campaign", "positioning", "consumer insight", "brand equity",
+                  "atl", "btl", "brand manager", "brand building", "brand strategy"],
+        "Digital / AI": ["digital", "programmatic", "automation", "ai ", "machine learning",
+                         "martech", "performance marketing", "analytics", "data-driven",
+                         "adtech", "ai tools", "genai", "llm"],
+        "Content": ["content", "seo", "social media", "creator", "organic", "editorial",
+                    "copywriting", "content strategy", "content marketing"],
+        "Trade Marketing": ["trade", "retail", "channel", "in-store", "visibility",
+                            "activation", "distributor", "shopper", "trade marketing"],
+        "P&L / Revenue": ["p&l", "revenue", "profit", "budget", "cost", "market share",
+                          "growth", "business development", "ebitda"],
+    }
+
+    jd_domains, cv_domains = [], []
+    for domain, signals in domain_signals.items():
+        if any(s in desc_lower for s in signals):
+            jd_domains.append(domain)
+        if any(s in cv_lower for s in signals):
+            cv_domains.append(domain)
+
+    important_terms = [
+        "digital", "brand", "campaign", "strategy", "performance", "analytics", "content",
+        "media", "growth", "revenue", "budget", "team", "stakeholder", "agency",
+        "automation", "data", "market", "consumer", "product", "launch", "trade",
+        "channel", "social", "programmatic", "roi", "kpi", "crm", "seo",
+        "leadership", "planning", "execution", "insights", "positioning",
+    ]
+    jd_words = set(re.findall(r"\b[a-z]{4,}\b", desc_lower))
+    cv_words = set(re.findall(r"\b[a-z]{4,}\b", cv_lower))
+    matched = [t for t in important_terms if t in jd_words and t in cv_words]
+    missing = [t for t in important_terms if t in jd_words and t not in cv_words]
+
+    reasons = []
+    if ai_score is not None and ai_score < 0.7:
+        if missing:
+            reasons.append(f"Keywords in JD not found in CV: **{', '.join(missing[:6])}**")
+        missing_domains = [d for d in jd_domains if d not in cv_domains]
+        if missing_domains:
+            reasons.append(
+                f"JD signals these domains but CV doesn't surface them: "
+                f"**{', '.join(missing_domains)}**"
+            )
+
+    return {
+        "jd_domains": jd_domains,
+        "cv_domains": cv_domains,
+        "matched_keywords": matched[:8],
+        "missing_keywords": missing[:8],
+        "score_reasons": reasons,
+    }
+
+
+def _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_texts,
+                                   domain_emphasis=None, extra_context=""):
     """Generate a tailored CV for a specific job."""
     import anthropic
     cv_text = next(iter(cv_texts.values()), "")
@@ -370,6 +463,21 @@ def _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_text
             "If the CV does not mention education, OMIT this entire section. Never write\n"
             'placeholder text like "Education details not provided".]'
         )
+
+    # Build domain emphasis block
+    domain_block = ""
+    if domain_emphasis:
+        emphasis_lines = [_DOMAIN_DETAILS[d] for d in domain_emphasis if d in _DOMAIN_DETAILS]
+        if emphasis_lines:
+            domain_block = (
+                "\nDOMAIN EMPHASIS — CRITICAL FOR THIS ROLE:\n"
+                "This specific job requires the following domains. Ensure the CV prominently features "
+                "achievements from EACH of these areas. Do NOT omit relevant wins:\n"
+                + "".join(f"- {ln}\n" for ln in emphasis_lines)
+                + "Draw on ALL available experience in these domains from the CV below.\n"
+            )
+
+    extra_block = f"\nCANDIDATE ADDITIONAL CONTEXT:\n{extra_context}\n" if extra_context else ""
 
     client = anthropic.Anthropic(api_key=crd.anthropic_api_key)
     prompt = f"""You are a senior career coach creating an ATS-optimized tailored CV.
@@ -450,6 +558,7 @@ RULES:
 - ALWAYS include the EDUCATION & CERTIFICATIONS section — ATS systems flag CVs missing education
 - List certifications/achievements as a sub-section or inline under EDUCATION
 
+{domain_block}{extra_block}
 Job Title: {title}
 Company: {company}
 Job Description:
@@ -528,7 +637,7 @@ def render_manual_queue() -> None:
                         )
 
     # ── Filters ──
-    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+    col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 1, 1])
     with col1:
         portal_filter = st.selectbox("Portal", PORTALS, key="caq_portal")
     with col2:
@@ -537,14 +646,18 @@ def render_manual_queue() -> None:
         view_mode = st.radio("View", ["Best Matches", "All Jobs"], key="caq_view", horizontal=True)
     with col4:
         page_size = st.selectbox("Per page", [10, 25, 50], key="caq_page_size")
+    with col5:
+        show_applied = st.checkbox("Show Applied", value=False, key="caq_show_applied",
+                                   help="Include already-applied jobs so you can undo if applied by mistake")
 
     portal_val = portal_filter if portal_filter != "All" else None
     score_val = min_score if min_score > 0 else None
 
     if view_mode == "Best Matches":
-        queue = get_cloud_apply_queue(min_ai_score=score_val, portal=portal_val, limit=200)
+        queue = get_cloud_apply_queue(min_ai_score=score_val, portal=portal_val, limit=200,
+                                      include_applied=show_applied)
     else:
-        queue = get_cloud_apply_queue(portal=portal_val, limit=200)
+        queue = get_cloud_apply_queue(portal=portal_val, limit=200, include_applied=show_applied)
 
     # Also include legacy manual queue
     legacy_queue = get_manual_apply_queue()
@@ -710,10 +823,11 @@ def render_manual_queue() -> None:
             header_col, score_col, action_col = st.columns([3, 1, 2])
 
             with header_col:
+                _applied_badge = " :blue[✓ Applied]" if job.get("app_status") == "manually_applied" else ""
                 if url:
-                    st.markdown(f"### [{title}]({url})")
+                    st.markdown(f"### [{title}]({url}){_applied_badge}")
                 else:
-                    st.markdown(f"### {title}")
+                    st.markdown(f"### {title}{_applied_badge}")
                 portal_badge = portal.upper() if portal else "?"
                 info_parts = [f"**{company}**", location, portal_badge]
                 if salary:
@@ -729,19 +843,109 @@ def render_manual_queue() -> None:
                     st.caption(f"KW: {int(kw_score * 100)}%")
 
             with action_col:
+                app_status = job.get("app_status", "")
                 btn_c1, btn_c2 = st.columns(2)
                 with btn_c1:
                     if url:
                         st.link_button("Apply Now", url, type="primary")
                 with btn_c2:
-                    if st.button("Mark Applied", key=f"mark_{job_id}_{card_idx}"):
-                        mark_manually_applied(job_id)
-                        st.success("Marked as applied!")
-                        time.sleep(0.5)
-                        st.rerun()
+                    if app_status == "manually_applied":
+                        if st.button("Undo Applied", key=f"unmark_{job_id}_{card_idx}", type="secondary"):
+                            unmark_applied(job_id)
+                            st.success("Moved back to queue!")
+                            time.sleep(0.5)
+                            st.rerun()
+                    else:
+                        if st.button("Mark Applied", key=f"mark_{job_id}_{card_idx}"):
+                            mark_manually_applied(job_id)
+                            st.success("Marked as applied!")
+                            time.sleep(0.5)
+                            st.rerun()
 
-            # ── Quick action row: Generate + Download ──
+            # ── Score Insight + Customise Before Generating ──
             if api_key and has_cv:
+                _rec_key = f"rec_open_{job_id}"
+                _domain_key = f"domain_emphasis_{job_id}"
+                _ctx_key = f"extra_ctx_{job_id}"
+
+                # Load CV text once for analysis (only when expander is open)
+                with st.expander("Score Insight & Customise Generation", expanded=False):
+                    try:
+                        from src.cv_manager import load_all_cvs
+                        from src.config import get_config
+                        _cfg_tmp = get_config(_config_path())
+                        _cv_texts_tmp = load_all_cvs(_cfg_tmp, _cv_dir())
+                        _cv_sample = next(iter(_cv_texts_tmp.values()), "")
+                    except Exception:
+                        _cv_sample = ""
+
+                    _analysis = _analyze_jd_for_recommendations(
+                        description, _cv_sample, ai_score, kw_score
+                    )
+
+                    # Score explanation
+                    if ai_score is not None:
+                        score_pct = int(ai_score * 100)
+                        if score_pct >= 70:
+                            st.success(f"Strong match ({score_pct}%) — CV aligns well with this JD.")
+                        elif score_pct >= 50:
+                            st.warning(f"Moderate match ({score_pct}%). See suggestions below to improve output.")
+                        else:
+                            st.error(f"Low match ({score_pct}%). Domain emphasis and extra context will help significantly.")
+
+                        if _analysis["score_reasons"]:
+                            st.markdown("**Why the score is what it is:**")
+                            for r in _analysis["score_reasons"]:
+                                st.markdown(f"- {r}")
+
+                    # Keyword match summary
+                    if _analysis["matched_keywords"] or _analysis["missing_keywords"]:
+                        kw_c1, kw_c2 = st.columns(2)
+                        with kw_c1:
+                            if _analysis["matched_keywords"]:
+                                st.markdown(
+                                    "**Keywords matched:** "
+                                    + ", ".join(f"`{k}`" for k in _analysis["matched_keywords"])
+                                )
+                        with kw_c2:
+                            if _analysis["missing_keywords"]:
+                                st.markdown(
+                                    "**Keywords to add:** "
+                                    + ", ".join(f"`{k}`" for k in _analysis["missing_keywords"])
+                                )
+
+                    st.divider()
+
+                    # Domain emphasis checkboxes
+                    st.markdown("**Select domains to emphasise in CV & Cover Letter:**")
+                    _all_domains = list(_DOMAIN_DETAILS.keys())
+                    _default_domains = [d for d in _analysis["jd_domains"] if d in _all_domains]
+                    _selected = st.multiselect(
+                        "Domains (pre-selected based on JD signals)",
+                        options=_all_domains,
+                        default=st.session_state.get(_domain_key, _default_domains),
+                        key=f"ms_{_domain_key}_{card_idx}",
+                        help="AI will emphasise your experience in these areas. Uncheck irrelevant ones, add any you want highlighted.",
+                    )
+                    st.session_state[_domain_key] = _selected
+
+                    # Extra context free text
+                    _extra = st.text_area(
+                        "Additional context for this application (optional)",
+                        value=st.session_state.get(_ctx_key, ""),
+                        height=80,
+                        key=f"ta_{_ctx_key}_{card_idx}",
+                        placeholder="e.g. I led a similar AI automation project; highlight the IISc certification; this is a startup role so emphasise agility",
+                    )
+                    st.session_state[_ctx_key] = _extra
+
+                    st.caption("These settings apply only to this job's next generation. Re-generate to apply changes.")
+
+                # Retrieve per-job customisation for use in buttons below
+                _job_domains = st.session_state.get(_domain_key, [])
+                _job_ctx = st.session_state.get(_ctx_key, "")
+
+                # ── Quick action row: Generate + Download ──
                 qa_col1, qa_col2, qa_col3, qa_col4 = st.columns(4)
 
                 with qa_col1:
@@ -750,7 +954,10 @@ def render_manual_queue() -> None:
                             with st.spinner("Generating..."):
                                 try:
                                     cfg, crd, cv_texts = _load_cv_and_config()
-                                    cl = _generate_cover_letter_for_job(title, company, description, cfg, crd, cv_texts)
+                                    cl = _generate_cover_letter_for_job(
+                                        title, company, description, cfg, crd, cv_texts,
+                                        domain_emphasis=_job_domains, extra_context=_job_ctx,
+                                    )
                                     st.session_state[f"cover_letter_{job_id}"] = cl
                                     save_generated_content(job_id, cover_letter=cl)
                                     st.rerun()
@@ -775,7 +982,10 @@ def render_manual_queue() -> None:
                             with st.spinner("Tailoring CV..."):
                                 try:
                                     cfg, crd, cv_texts = _load_cv_and_config()
-                                    tcv = _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_texts)
+                                    tcv = _generate_tailored_cv_for_job(
+                                        title, company, description, cfg, crd, cv_texts,
+                                        domain_emphasis=_job_domains, extra_context=_job_ctx,
+                                    )
                                     st.session_state[f"cv_tailor_{job_id}"] = tcv
                                     save_generated_content(job_id, tailored_cv_text=tcv)
                                     st.rerun()
@@ -811,14 +1021,20 @@ def render_manual_queue() -> None:
 
                 with qa_col4:
                     if has_generated and not saved_cl and not saved_cv:
-                        pass  # nothing to generate all-in-one for
+                        pass
                     elif not has_generated:
                         if st.button("Gen All", key=f"gen_all_{job_id}_{card_idx}", type="secondary"):
                             with st.spinner("Generating CL + CV + Recruiter Msg..."):
                                 try:
                                     cfg, crd, cv_texts = _load_cv_and_config()
-                                    cl = _generate_cover_letter_for_job(title, company, description, cfg, crd, cv_texts)
-                                    tcv = _generate_tailored_cv_for_job(title, company, description, cfg, crd, cv_texts)
+                                    cl = _generate_cover_letter_for_job(
+                                        title, company, description, cfg, crd, cv_texts,
+                                        domain_emphasis=_job_domains, extra_context=_job_ctx,
+                                    )
+                                    tcv = _generate_tailored_cv_for_job(
+                                        title, company, description, cfg, crd, cv_texts,
+                                        domain_emphasis=_job_domains, extra_context=_job_ctx,
+                                    )
                                     rm = _generate_recruiter_message_for_job(title, company, description, cfg, crd, cv_texts)
                                     st.session_state[f"cover_letter_{job_id}"] = cl
                                     st.session_state[f"cv_tailor_{job_id}"] = tcv
