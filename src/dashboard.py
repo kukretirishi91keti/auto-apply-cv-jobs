@@ -509,7 +509,11 @@ description first, then add the candidate's strongest skills. This section is th
 primary ATS keyword match zone.]
 
 PROFESSIONAL EXPERIENCE
-[Company Name | Role Title | Duration — ONLY from the actual CV]
+[IMPORTANT DATE RULE: Copy start/end dates EXACTLY as written in the CV.
+If a role has NO dates in the CV, format as "Company | Role" with NO date field.
+NEVER write "Duration not specified", "N/A", "Present", or any placeholder.
+Format WITH dates: "Company Name | Role Title | May 2018 - Present"
+Format WITHOUT dates: "Company Name | Role Title"]
 - [Achievement bullet with metrics — ONLY real achievements from the CV]
 - [Achievement bullet with metrics]
 - [Achievement bullet with metrics]
@@ -535,13 +539,14 @@ to this specific job description. Every bullet must include a metric.]
 
 METRIC EXPRESSION RULE — CRITICAL:
 Express all growth achievements as MULTIPLIERS or RATIOS, never as "from X to Y" ranges.
-- "from 40% to 74%" → "1.7X improvement" or "increased 1.7X"
-- "from Rs. 30 Lacs to Rs. 5 Crores" → "scaled 15X" or "grew media spends 15-fold"
-- "from Rs. 200 Cr to Rs. 1,100 Cr" → "grew 5.5X"
-- "from 10 to 35" → "improved 3.5X"
+- "from 40% to 74%" → compute 74/40 = 1.85 → write "1.85X improvement" (NOT "40% improvement")
+- "from Rs. 30 Lacs to Rs. 5 Crores" → compute 500/30 = 16.7 → write "scaled 15X"
+- "from Rs. 200 Cr to Rs. 1,100 Cr" → compute 1100/200 = 5.5 → write "grew 5.5X"
+- "from 10 to 35" → compute 35/10 = 3.5 → write "improved 3.5X"
 - "40,000+ leads in 30 days" stays as-is — it is a destination/output, not a range
 - "Rs. 1,500 Crores revenue" stays as-is — it is a total, not a range
-- RULE: if the CV says "from A to B", compute B/A and write "NX" — never write both A and B
+- RULE: if the CV says "from A to B", compute B/A and write "NX" — NEVER write just A alone
+- RULE: if the CV ALREADY states "1.7X" or "15X", copy it verbatim — do NOT convert back to %
 
 RULES:
 - Output ONLY the CV text — no commentary, no preamble, no markdown bold (**)
@@ -552,6 +557,8 @@ RULES:
 - NEVER mention specific number of years of experience (e.g. "10 years", "8+ years")
   Instead use "Seasoned professional" or "Extensive experience" — let the CV speak for itself
 - NEVER fabricate companies, roles, or achievements not in the candidate's CV
+- NEVER add fiscal years, quarters, or time qualifiers (e.g. "FY25", "Q3 2024", "in 2023")
+  that do not appear word-for-word in the CV text — if the CV doesn't say "FY25", don't write it
 - Do NOT include candidate name, email, or phone — those are added separately
 - Mirror exact phrases from the job description (e.g. if JD says "go-to-market
   strategy", use that exact phrase, not "GTM" alone)

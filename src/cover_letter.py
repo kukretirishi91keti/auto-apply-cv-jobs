@@ -80,9 +80,11 @@ Instead use phrases like "extensive experience" or "proven track record".
 SALUTATION RULE: Address as "Dear [Company Name] Hiring Team," — use the actual company
 name, never write "Dear Hiring Manager," or "To Whom It May Concern,".
 
-METRIC RULE: Express all growth as multipliers, never "from X to Y" ranges.
-Example: "scaled media spends 15X in 4 years" not "from Rs. 30L to Rs. 5 Cr".
-Totals and destinations are fine as-is (e.g. "drove Rs. 500 Cr AUM", "40,000 leads").
+METRIC RULE — CRITICAL:
+- If CV says "from A to B": compute B/A and write "NX". Example: "from 40% to 74%" → "1.7X improvement". NEVER extract just the start number (do NOT write "40% improvement").
+- If CV already says "1.7X" or "15X": copy it VERBATIM — do NOT convert back to a percentage.
+- Totals and destinations are fine as-is (e.g. "Rs. 500 Cr AUM", "40,000 leads").
+- Do NOT add fiscal years or time qualifiers (e.g. "FY25") not in the CV.
 {name_line}{edu_line}{cert_line}{domain_line}{extra_line}
 
 Job Title: {job_title}
