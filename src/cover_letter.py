@@ -81,10 +81,14 @@ SALUTATION RULE: Address as "Dear [Company Name] Hiring Team," — use the actua
 name, never write "Dear Hiring Manager," or "To Whom It May Concern,".
 
 METRIC RULE — CRITICAL:
-- If CV says "from A to B": compute B/A and write "NX". Example: "from 40% to 74%" → "1.7X improvement". NEVER extract just the start number (do NOT write "40% improvement").
-- If CV already says "1.7X" or "15X": copy it VERBATIM — do NOT convert back to a percentage.
-- Totals and destinations are fine as-is (e.g. "Rs. 500 Cr AUM", "40,000 leads").
-- Do NOT add fiscal years or time qualifiers (e.g. "FY25") not in the CV.
+- If CV says "from A to B": compute B/A, write ONLY "NX", and DELETE the range completely.
+  WRONG: "scaled media spends from Rs.30 Lacs to Rs.5 Crores" ← range must not appear
+  CORRECT: "scaled media spends 16.7X" ← multiplier only, range fully erased
+  WRONG: "improved lead quality by 40%" ← extracting just the start number
+  CORRECT: "improved lead quality 1.7X" ← compute 74/40 = 1.85, write multiplier
+- If CV already says "1.7X" or "16.7X": copy it VERBATIM — do NOT convert back to a percentage.
+- Totals are fine as-is (e.g. "Rs. 500 Cr AUM", "40,000 leads", "Rs. 1,300 Cr revenue").
+- Do NOT add fiscal years or time qualifiers (e.g. "FY25") not explicitly in the CV.
 {name_line}{edu_line}{cert_line}{domain_line}{extra_line}
 
 Job Title: {job_title}
