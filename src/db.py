@@ -333,14 +333,19 @@ def get_cloud_apply_queue(
     min_ai_score: float | None = None,
     portal: str | None = None,
     limit: int = 100,
+    include_applied: bool = False,
 ) -> list[sqlite3.Row]:
     """Get all jobs awaiting application (for Cloud Apply Assistant).
 
     Includes ALL portals — not just scrape-only. Jobs that haven't been
     applied to yet, ordered by AI score (best matches first).
+    Set include_applied=True to also return manually_applied jobs (for undo).
     """
     with get_connection() as conn:
-        conditions = ["(a.status IS NULL OR a.status IN ('scrape_only', 'pending'))"]
+        if include_applied:
+            conditions = ["(a.status IS NULL OR a.status IN ('scrape_only', 'pending', 'manually_applied'))"]
+        else:
+            conditions = ["(a.status IS NULL OR a.status IN ('scrape_only', 'pending'))"]
         params: list[Any] = []
 
         if min_ai_score is not None:
@@ -392,6 +397,15 @@ def mark_manually_applied(job_id: int, notes: str = "") -> None:
                 "INSERT INTO applications (job_id, portal, status, notes) VALUES (?, ?, 'manually_applied', ?)",
                 (job_id, portal[0] if portal else "unknown", notes),
             )
+
+
+def unmark_applied(job_id: int) -> None:
+    """Reset a manually-applied job back to pending so it reappears in the queue."""
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE applications SET status = 'scrape_only' WHERE job_id = ? AND status = 'manually_applied'",
+            (job_id,),
+        )
 
 
 def save_generated_content(

@@ -22,6 +22,7 @@ from src.db import (
     get_manual_apply_queue,
     get_cloud_apply_queue,
     mark_manually_applied,
+    unmark_applied,
     save_generated_content,
     get_generated_content,
     get_daily_stats,
@@ -636,7 +637,7 @@ def render_manual_queue() -> None:
                         )
 
     # ── Filters ──
-    col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+    col1, col2, col3, col4, col5 = st.columns([2, 2, 2, 1, 1])
     with col1:
         portal_filter = st.selectbox("Portal", PORTALS, key="caq_portal")
     with col2:
@@ -645,14 +646,18 @@ def render_manual_queue() -> None:
         view_mode = st.radio("View", ["Best Matches", "All Jobs"], key="caq_view", horizontal=True)
     with col4:
         page_size = st.selectbox("Per page", [10, 25, 50], key="caq_page_size")
+    with col5:
+        show_applied = st.checkbox("Show Applied", value=False, key="caq_show_applied",
+                                   help="Include already-applied jobs so you can undo if applied by mistake")
 
     portal_val = portal_filter if portal_filter != "All" else None
     score_val = min_score if min_score > 0 else None
 
     if view_mode == "Best Matches":
-        queue = get_cloud_apply_queue(min_ai_score=score_val, portal=portal_val, limit=200)
+        queue = get_cloud_apply_queue(min_ai_score=score_val, portal=portal_val, limit=200,
+                                      include_applied=show_applied)
     else:
-        queue = get_cloud_apply_queue(portal=portal_val, limit=200)
+        queue = get_cloud_apply_queue(portal=portal_val, limit=200, include_applied=show_applied)
 
     # Also include legacy manual queue
     legacy_queue = get_manual_apply_queue()
@@ -818,10 +823,11 @@ def render_manual_queue() -> None:
             header_col, score_col, action_col = st.columns([3, 1, 2])
 
             with header_col:
+                _applied_badge = " :blue[✓ Applied]" if job.get("app_status") == "manually_applied" else ""
                 if url:
-                    st.markdown(f"### [{title}]({url})")
+                    st.markdown(f"### [{title}]({url}){_applied_badge}")
                 else:
-                    st.markdown(f"### {title}")
+                    st.markdown(f"### {title}{_applied_badge}")
                 portal_badge = portal.upper() if portal else "?"
                 info_parts = [f"**{company}**", location, portal_badge]
                 if salary:
@@ -837,16 +843,24 @@ def render_manual_queue() -> None:
                     st.caption(f"KW: {int(kw_score * 100)}%")
 
             with action_col:
+                app_status = job.get("app_status", "")
                 btn_c1, btn_c2 = st.columns(2)
                 with btn_c1:
                     if url:
                         st.link_button("Apply Now", url, type="primary")
                 with btn_c2:
-                    if st.button("Mark Applied", key=f"mark_{job_id}_{card_idx}"):
-                        mark_manually_applied(job_id)
-                        st.success("Marked as applied!")
-                        time.sleep(0.5)
-                        st.rerun()
+                    if app_status == "manually_applied":
+                        if st.button("Undo Applied", key=f"unmark_{job_id}_{card_idx}", type="secondary"):
+                            unmark_applied(job_id)
+                            st.success("Moved back to queue!")
+                            time.sleep(0.5)
+                            st.rerun()
+                    else:
+                        if st.button("Mark Applied", key=f"mark_{job_id}_{card_idx}"):
+                            mark_manually_applied(job_id)
+                            st.success("Marked as applied!")
+                            time.sleep(0.5)
+                            st.rerun()
 
             # ── Score Insight + Customise Before Generating ──
             if api_key and has_cv:
