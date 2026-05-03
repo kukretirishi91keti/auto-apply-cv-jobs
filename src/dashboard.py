@@ -538,14 +538,15 @@ to this specific job description. Every bullet must include a metric.]
 {edu_instruction}
 
 METRIC EXPRESSION RULE — CRITICAL:
-Express all growth achievements as MULTIPLIERS or RATIOS, never as "from X to Y" ranges.
-- "from 40% to 74%" → compute 74/40 = 1.85 → write "1.85X improvement" (NOT "40% improvement")
-- "from Rs. 30 Lacs to Rs. 5 Crores" → compute 500/30 = 16.7 → write "scaled 15X"
-- "from Rs. 200 Cr to Rs. 1,100 Cr" → compute 1100/200 = 5.5 → write "grew 5.5X"
-- "from 10 to 35" → compute 35/10 = 3.5 → write "improved 3.5X"
+Express all growth achievements as MULTIPLIERS only. Never include the original "from A to B" range in the output.
+- "from 40% to 74%" → compute 74/40 = 1.85 → write "1.85X improvement" (DELETE the range entirely)
+- "from Rs. 30 Lacs to Rs. 5 Crores" → compute 500/30 ≈ 16.7 → write "scaled media spends 16.7X" (DELETE "from Rs. 30 Lacs to Rs. 5 Crores")
+- "from Rs. 200 Cr to Rs. 1,100 Cr" → write "grew 5.5X" (DELETE the range)
+- "from Rs. 150 Cr to Rs. 375 Cr" → write "grew 2.5X" (DELETE the range)
 - "40,000+ leads in 30 days" stays as-is — it is a destination/output, not a range
 - "Rs. 1,500 Crores revenue" stays as-is — it is a total, not a range
-- RULE: if the CV says "from A to B", compute B/A and write "NX" — NEVER write just A alone
+- WRONG EXAMPLE: "Scaled media spends 16.7X from Rs. 30 Lacs to Rs. 5 Crores" ← FORBIDDEN, range must be deleted
+- CORRECT EXAMPLE: "Scaled media spends 16.7X" ← ONLY the multiplier, no range
 - RULE: if the CV ALREADY states "1.7X" or "15X", copy it verbatim — do NOT convert back to %
 
 RULES:
@@ -1621,11 +1622,32 @@ def render_settings() -> None:
 
         config = load_config(_config_path())
 
+        # Compute which terms will actually be used (first 10 after comma-split)
+        _all_terms: list[str] = []
+        for _kw in config.search.keywords:
+            for _part in _kw.split(","):
+                _t = _part.strip()
+                if _t and _t not in _all_terms:
+                    _all_terms.append(_t)
+        _active = _all_terms[:10]
+        _inactive = _all_terms[10:]
+        with st.expander("Active search terms (first 10 used for portal searches)", expanded=False):
+            st.markdown(
+                "**Used for LinkedIn / API job searches:** "
+                + "  |  ".join(f"`{t}`" for t in _active)
+            )
+            if _inactive:
+                st.caption(
+                    "Not used for portal searches (only for keyword scoring): "
+                    + ", ".join(f"`{t}`" for t in _inactive)
+                )
+            st.caption("Tip: put your highest-yield title variants in the first keyword lines.")
+
         with st.form("search_form"):
             keywords = st.text_area(
-                "Search Keywords (one per line)",
+                "Search Keywords (one per line, comma-separate variants)",
                 value="\n".join(config.search.keywords),
-                height=100,
+                height=120,
             )
             locations = st.text_area(
                 "Locations (one per line)",

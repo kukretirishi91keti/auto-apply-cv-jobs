@@ -3,14 +3,15 @@
 # Job search preferences
 search:
   keywords:
-    - "AVP Marketing, AVP Brand, AVP Digital Marketing"
-    - "VP Growth, VP Marketing, VP Brand"
-    - "Head of Marketing, Head of Brand, Head of Growth"
-    - "Director Marketing, Director Brand Strategy"
-    - "Senior Product Manager, Lead Product Manager"
-    - "GTM Strategy, Go To Market"
+    # First 10 terms (after comma-split) are used for LinkedIn/API searches
+    # Ordered by volume + relevance — replace weak terms with your actual target titles
+    - "AVP Marketing, VP Marketing, Marketing Head"
+    - "Head of Marketing, Director Marketing, CMO"
+    - "Head of Brand, VP Brand, Brand Head"
+    - "Head of Digital Marketing, Digital Marketing Head"
+    # Below are used for keyword scoring (matching) but not portal search
     - "BFSI Marketing, Insurance Marketing, FinTech Marketing"
-    - "Digital Marketing Head, Performance Marketing Lead"
+    - "Performance Marketing Lead, Growth Marketing Head"
   locations:
     - "Bangalore"
     - "Mumbai"
