@@ -19,6 +19,8 @@ def generate_cover_letter(
     config: AppConfig,
     creds: Credentials,
     candidate_name: str = "",
+    domain_emphasis: list[str] | None = None,
+    extra_context: str = "",
 ) -> str:
     """Generate a tailored cover letter using Claude."""
     name_line = ""
@@ -40,6 +42,21 @@ def generate_cover_letter(
                 edu_parts.append(" from ".join(parts[:2]) + (f" ({e.cgpa})" if e.cgpa else ""))
         if edu_parts:
             edu_line = f"\nCandidate Education: {'; '.join(edu_parts)}"
+
+    domain_line = ""
+    if domain_emphasis:
+        _DOMAIN_CL = {
+            "Brand": "brand marketing, campaign management, consumer insights",
+            "Digital / AI": "digital marketing, AI/automation tools, performance marketing",
+            "Content": "content marketing, organic growth, content production at scale",
+            "Trade Marketing": "trade marketing, BTL activations, channel programs",
+            "P&L / Revenue": "P&L management, revenue growth, business efficiency",
+        }
+        parts = [_DOMAIN_CL[d] for d in domain_emphasis if d in _DOMAIN_CL]
+        if parts:
+            domain_line = f"\nFOCUS AREAS: Emphasise the candidate's experience in: {'; '.join(parts)}."
+
+    extra_line = f"\nAdditional context: {extra_context}" if extra_context else ""
 
     cert_line = ""
     if config.certifications:
@@ -66,7 +83,7 @@ name, never write "Dear Hiring Manager," or "To Whom It May Concern,".
 METRIC RULE: Express all growth as multipliers, never "from X to Y" ranges.
 Example: "scaled media spends 15X in 4 years" not "from Rs. 30L to Rs. 5 Cr".
 Totals and destinations are fine as-is (e.g. "drove Rs. 500 Cr AUM", "40,000 leads").
-{name_line}{edu_line}{cert_line}
+{name_line}{edu_line}{cert_line}{domain_line}{extra_line}
 
 Job Title: {job_title}
 Company: {company}
