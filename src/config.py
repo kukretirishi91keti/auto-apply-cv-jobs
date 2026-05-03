@@ -21,6 +21,20 @@ class CVVersion(BaseModel):
     description: str
 
 
+class EducationEntry(BaseModel):
+    degree: str = ""
+    institution: str = ""
+    year: str = ""
+    cgpa: str = ""      # e.g. "8.5/10" or "82%"
+    details: str = ""
+
+
+class CertificationEntry(BaseModel):
+    name: str = ""
+    issuer: str = ""
+    year: str = ""
+
+
 class SearchConfig(BaseModel):
     keywords: list[str] = []
     locations: list[str] = []
@@ -85,6 +99,8 @@ class NotificationsConfig(BaseModel):
 class AppConfig(BaseModel):
     search: SearchConfig = Field(default_factory=SearchConfig)
     cvs: CVConfig = Field(default_factory=CVConfig)
+    education: list[EducationEntry] = Field(default_factory=list)
+    certifications: list[CertificationEntry] = Field(default_factory=list)
     matching: MatchingConfig = Field(default_factory=MatchingConfig)
     apply: ApplyConfig = Field(default_factory=ApplyConfig)
     portals: dict[str, PortalConfig] = Field(default_factory=dict)
