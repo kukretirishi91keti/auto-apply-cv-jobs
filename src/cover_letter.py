@@ -59,6 +59,9 @@ Do NOT use generic filler — reference actual skills from the CV that match the
 Do NOT use placeholders like [Candidate Name] or [Your Name] — use the actual name.
 Do NOT mention specific number of years of experience (e.g. "8 years", "10+ years").
 Instead use phrases like "extensive experience" or "proven track record".
+
+SALUTATION RULE: Address as "Dear [Company Name] Hiring Team," — use the actual company
+name, never write "Dear Hiring Manager," or "To Whom It May Concern,".
 {name_line}{edu_line}{cert_line}
 
 Job Title: {job_title}

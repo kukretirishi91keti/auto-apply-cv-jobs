@@ -408,10 +408,20 @@ PROFESSIONAL EXPERIENCE
 - [Achievement bullet with metrics]
 [Include ALL roles from the actual CV, with 3-5 bullets each. Reframe bullets
 to emphasize relevance to the target job, but never change the facts.
-Naturally embed job description keywords into bullet text where truthful.]
+Naturally embed job description keywords into bullet text where truthful.
+LABEL each bullet you use here as USED — they must NOT appear again in KEY ACHIEVEMENTS.]
 
 KEY ACHIEVEMENTS
-- [Top 5-6 measurable achievements most relevant to this job — ONLY from the CV]
+[Pick the 5-6 most impressive ADDITIONAL achievements from the CV that are NOT already
+listed in PROFESSIONAL EXPERIENCE above. These must be DIFFERENT bullets — not repeats.
+If the CV has achievements from multiple domains (e.g. brand, digital, product, P&L),
+spread across domains to show breadth. Prioritise whichever domain is most relevant
+to this specific job description. Every bullet must include a metric.]
+- [Different achievement not in experience section]
+- [Different achievement not in experience section]
+- [Different achievement not in experience section]
+- [Different achievement not in experience section]
+- [Different achievement not in experience section]
 
 {edu_instruction}
 
