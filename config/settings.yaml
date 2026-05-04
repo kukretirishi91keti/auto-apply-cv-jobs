@@ -26,6 +26,14 @@ search:
   min_salary: 0          # 0 = no minimum
   excluded_companies:
     - "example-spam-company"
+  # Job titles containing any of these phrases are skipped BEFORE AI scoring (saves quota)
+  excluded_title_patterns:
+    - "Senior Manager"
+    - "Associate Director"
+    - "Assistant Manager"
+    - "Executive"
+    - "Trainee"
+    - "Intern"
 
 # CV configuration
 cvs:
@@ -49,8 +57,8 @@ matching:
   # Stage 2: Claude AI scoring (paid, smart)
   ai_min_score: 0.7            # 0-1, minimum AI score to auto-apply
   ai_model: "claude-sonnet-4-20250514"
-  max_ai_scorings_per_day: 100
-  api_budget_usd: 2.00         # hard-stop daily Claude API spend
+  max_ai_scorings_per_day: 500
+  api_budget_usd: 5.00         # hard-stop daily Claude API spend
 
 # Application settings
 apply:

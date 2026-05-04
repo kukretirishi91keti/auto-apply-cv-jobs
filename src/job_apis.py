@@ -60,8 +60,8 @@ async def jsearch_search(
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.get(JSEARCH_URL, headers=headers, params=params)
             if resp.status_code == 429:
-                logger.warning("JSearch: rate limited (429)")
-                return jobs
+                logger.warning("JSearch: rate limited (429) — daily quota likely exhausted")
+                raise RuntimeError("JSearch 429 rate-limited")
             if resp.status_code >= 400:
                 logger.warning("JSearch: HTTP %d for '%s'", resp.status_code, query)
                 return jobs
@@ -400,17 +400,21 @@ async def aggregator_search(
 
     jsearch_disabled = False
     for i, term in enumerate(terms[:max_terms]):
-        # JSearch — skip all remaining calls once rate-limited
+        # JSearch — skip all remaining calls once rate-limited or quota exhausted
         if has_jsearch and not jsearch_disabled:
             try:
                 if i > 0:
-                    await asyncio.sleep(1.5)
+                    await asyncio.sleep(3.0)  # 3 s between calls — avoids burst 429s
                 jobs = await jsearch_search(term, location, rapidapi_key=rapidapi_key)
                 if not jobs and i == 0:
                     jsearch_disabled = True
                     logger.info("JSearch returned 0 results on first call — skipping remaining terms")
                 else:
                     _add_jobs(jobs)
+            except RuntimeError as e:
+                # 429 rate-limit — quota exhausted for the day, stop all JSearch calls
+                logger.warning("JSearch quota exhausted — disabling for this run: %s", e)
+                jsearch_disabled = True
             except Exception as e:
                 logger.warning("JSearch failed for '%s': %s", term, e)
                 jsearch_disabled = True

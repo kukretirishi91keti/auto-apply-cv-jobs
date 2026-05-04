@@ -126,10 +126,25 @@ async def process_portal(
             if is_company_blocked(job.company):
                 logger.debug("Skipping blocked company: %s", job.company)
                 continue
+            company_excluded = False
             for exc in config.search.excluded_companies:
                 if exc.lower() in job.company.lower():
                     logger.debug("Skipping excluded company: %s", job.company)
-                    continue
+                    company_excluded = True
+                    break
+            if company_excluded:
+                continue
+
+            # Skip low-seniority titles before AI scoring (saves quota)
+            title_lower = job.title.lower()
+            excluded_title = False
+            for pat in (config.search.excluded_title_patterns or []):
+                if pat.lower() in title_lower:
+                    logger.debug("Skipping low-seniority title: %s", job.title)
+                    excluded_title = True
+                    break
+            if excluded_title:
+                continue
 
             # Cross-portal dedup
             if is_already_applied(job.company, job.title):

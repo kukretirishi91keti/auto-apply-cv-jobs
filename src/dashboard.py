@@ -1664,6 +1664,11 @@ def render_settings() -> None:
                 value="\n".join(config.search.excluded_companies),
                 height=80,
             )
+            excluded_titles = st.text_area(
+                "Excluded Title Patterns (one per line) — roles containing these are skipped before AI scoring",
+                value="\n".join(config.search.excluded_title_patterns or []),
+                height=100,
+            )
 
             st.markdown("---")
             st.markdown("**Matching**")
@@ -1674,6 +1679,11 @@ def render_settings() -> None:
             with col2:
                 max_per_day = st.number_input("Max Applications/Day", 1, 100, config.apply.max_applications_per_day)
                 max_per_portal = st.number_input("Max per Portal", 1, 50, config.apply.max_per_portal)
+            col3, col4 = st.columns(2)
+            with col3:
+                ai_cap = st.number_input("AI Scoring Cap (per day)", 50, 2000, config.matching.max_ai_scorings_per_day)
+            with col4:
+                api_budget = st.number_input("API Budget USD (hard stop)", 0.50, 20.0, float(config.matching.api_budget_usd), step=0.50)
 
             st.markdown("---")
             st.markdown("**CV Versions**")
@@ -1699,10 +1709,13 @@ def render_settings() -> None:
                 raw["search"]["locations"] = [l.strip() for l in locations.strip().split("\n") if l.strip()]
                 raw["search"]["experience_years"] = experience
                 raw["search"]["excluded_companies"] = [c.strip() for c in excluded.strip().split("\n") if c.strip()]
+                raw["search"]["excluded_title_patterns"] = [p.strip() for p in excluded_titles.strip().split("\n") if p.strip()]
 
                 raw.setdefault("matching", {})
                 raw["matching"]["keyword_min_score"] = kw_min
                 raw["matching"]["ai_min_score"] = ai_min
+                raw["matching"]["max_ai_scorings_per_day"] = int(ai_cap)
+                raw["matching"]["api_budget_usd"] = float(api_budget)
 
                 raw.setdefault("apply", {})
                 raw["apply"]["max_applications_per_day"] = max_per_day

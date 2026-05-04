@@ -42,6 +42,14 @@ class SearchConfig(BaseModel):
     seniority_levels: list[str] = []
     min_salary: int = 0
     excluded_companies: list[str] = []
+    excluded_title_patterns: list[str] = [
+        "Senior Manager",
+        "Associate Director",
+        "Assistant Manager",
+        "Executive",
+        "Trainee",
+        "Intern",
+    ]
 
 
 class CVConfig(BaseModel):
@@ -53,8 +61,8 @@ class MatchingConfig(BaseModel):
     keyword_min_score: float = 0.3
     ai_min_score: float = 0.7
     ai_model: str = "claude-sonnet-4-20250514"
-    max_ai_scorings_per_day: int = 100
-    api_budget_usd: float = 2.0
+    max_ai_scorings_per_day: int = 500
+    api_budget_usd: float = 5.0
 
 
 class ApplyConfig(BaseModel):
