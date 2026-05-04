@@ -40,15 +40,18 @@ cvs:
   # Path relative to project root
   directory: "data/cvs"
   versions:
-    - name: "brand_bfsi"
-      file: "CV_Talentfit.in.pdf"
-      description: "Brand development, BFSI marketing, celebrity partnerships, insurance"
+    - name: "bfsi_leadership"
+      file: "RishiKukreti_BFSI_Leadership.pdf"
+      description: "Use for: BFSI, insurance, banking, financial services, life insurance, general insurance, IRDAI regulated, wealth management, pension fund"
     - name: "growth_digital"
-      file: "CV_Prime_Video_&_Amazon_MGM_Studios.pdf"
-      description: "Growth leadership, digital marketing, user acquisition, content strategy"
-    - name: "general"
-      file: "Rishi Kukreti CV.pdf"
-      description: "General marketing, product management, business strategy"
+      file: "RishiKukreti_Growth_Digital.pdf"
+      description: "Use for: fintech, insurtech, SaaS, technology, growth-stage startups, product-led growth, digital-first, PLG, performance marketing, AI automation"
+    - name: "brand_digital_marketing"
+      file: "RishiKukreti_Brand_Digital_Marketing.pdf"
+      description: "Use for: FMCG, consumer goods, D2C brands, media agencies, creative agencies, brand strategy, ATL BTL campaigns, experiential marketing, integrated marketing"
+    - name: "consulting_transformation"
+      file: "RishiKukreti_Consulting_Transformation.pdf"
+      description: "Use for: management consulting, business transformation, strategy roles, advisory, P&L ownership, turnaround, operations"
 
 # Matching configuration
 matching:
