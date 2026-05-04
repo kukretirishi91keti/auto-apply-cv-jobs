@@ -1,0 +1,88 @@
+search:
+  keywords:
+    - "VP Marketing"
+    - "Head of Marketing"
+    - "Head of Growth"
+    - "VP Growth"
+    - "Director Marketing"
+    - "Head of Brand"
+    - "VP Brand"
+    - "Marketing Head"
+    - "Head of Digital Marketing"
+    - "Head of AI Marketing"
+  locations:
+    - "Delhi NCR"
+    - "Gurgaon"
+    - "Noida"
+    - "Mumbai"
+    - "Bangalore"
+  experience_years: 10
+  min_salary: 0
+  excluded_companies: []
+
+cvs:
+  directory: "data/users/kukretirishi91/cvs"
+  versions:
+    - name: "BFSI_Leadership"
+      file: "RishiKukreti_BFSI_Leadership.pdf"
+      description: "BFSI, insurance, regulated environments, P&L, product leadership"
+    - name: "Growth_Digital"
+      file: "RishiKukreti_Growth_Digital.pdf"
+      description: "Digital growth, performance marketing, MarTech, PLG, CAC/CLV"
+    - name: "Brand_Marketing"
+      file: "RishiKukreti_Brand_Digital_Marketing.pdf"
+      description: "Brand equity, integrated campaigns, consumer insights, ATL/BTL"
+    - name: "Consulting_Transformation"
+      file: "RishiKukreti_Consulting_Transformation.pdf"
+      description: "Business consulting, transformation programmes, programme management"
+
+matching:
+  keyword_min_score: 0.1
+  ai_min_score: 0.65
+  ai_model: "claude-sonnet-4-20250514"
+  max_ai_scorings_per_day: 200
+  api_budget_usd: 5.00
+
+apply:
+  max_applications_per_day: 30
+  max_per_portal: 15
+  generate_cover_letter: true
+  save_screenshots: true
+
+portals:
+  linkedin:
+    enabled: true
+    auto_apply: false
+  naukri:
+    enabled: true
+    auto_apply: true
+  indeed:
+    enabled: false
+    auto_apply: false
+  foundit:
+    enabled: false
+    auto_apply: false
+  ziprecruiter:
+    enabled: false
+    auto_apply: false
+  glassdoor:
+    enabled: false
+    auto_apply: false
+
+schedule:
+  enabled: false
+  cron_hour: 9
+  cron_minute: 0
+  timezone: "Asia/Kolkata"
+
+browser:
+  headless: true
+  slow_mo: 100
+  timeout: 30000
+  state_dir: "browser_state"
+
+notifications:
+  email:
+    enabled: false
+  slack:
+    enabled: false
