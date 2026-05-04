@@ -1,17 +1,19 @@
 # Auto-Apply CV Jobs Configuration
 
-# Job search preferences
 search:
   keywords:
-    # First 10 terms (after comma-split) are used for LinkedIn/API searches
-    # Ordered by volume + relevance — replace weak terms with your actual target titles
-    - "AVP Marketing, VP Marketing, Marketing Head"
-    - "Head of Marketing, Director Marketing, CMO"
-    - "Head of Brand, VP Brand, Brand Head"
-    - "Head of Digital Marketing, Digital Marketing Head"
-    # Below are used for keyword scoring (matching) but not portal search
+    # Search terms (also used for keyword scoring)
+    - "VP Marketing, Head of Marketing, Marketing Head"
+    - "VP Brand, Head of Brand, Brand Head, Brand Director"
+    - "VP Digital, Head of Digital Marketing, Digital Head"
+    - "VP Growth, Head of Growth, Growth Director"
+    - "CMO, Chief Marketing Officer"
+    - "Director Marketing, Director Brand, Director Digital"
+    # Domain/sector scoring keywords (not used as search queries)
     - "BFSI Marketing, Insurance Marketing, FinTech Marketing"
-    - "Performance Marketing Lead, Growth Marketing Head"
+    - "Performance Marketing, Growth Marketing, Demand Generation"
+    - "Product Marketing, Platform Marketing"
+    - "Marketing Transformation, Digital Transformation"
   locations:
     - "Bangalore"
     - "Mumbai"
@@ -20,13 +22,12 @@ search:
     - "Remote"
   experience_years: 10
   seniority_levels:
-    - "senior"       # Senior level (5-8 yrs)
-    - "director"     # Director level (8-12 yrs)
-    - "vp"           # VP level (10-15 yrs)
-  min_salary: 0          # 0 = no minimum
+    - "senior"
+    - "director"
+    - "vp"
+  min_salary: 0
   excluded_companies:
     - "example-spam-company"
-  # Job titles containing any of these phrases are skipped BEFORE AI scoring (saves quota)
   excluded_title_patterns:
     - "Senior Manager"
     - "Associate Director"
@@ -35,9 +36,7 @@ search:
     - "Trainee"
     - "Intern"
 
-# CV configuration
 cvs:
-  # Path relative to project root
   directory: "data/cvs"
   versions:
     - name: "brand_bfsi"
@@ -50,24 +49,19 @@ cvs:
       file: "Rishi Kukreti CV.pdf"
       description: "General marketing, product management, business strategy"
 
-# Matching configuration
 matching:
-  # Stage 1: keyword filter (free, fast)
-  keyword_min_score: 0.3       # 0-1, minimum keyword overlap to pass to stage 2
-  # Stage 2: Claude AI scoring (paid, smart)
-  ai_min_score: 0.7            # 0-1, minimum AI score to auto-apply
+  keyword_min_score: 0.3
+  ai_min_score: 0.7
   ai_model: "claude-sonnet-4-20250514"
   max_ai_scorings_per_day: 500
-  api_budget_usd: 5.00         # hard-stop daily Claude API spend
+  api_budget_usd: 5.00
 
-# Application settings
 apply:
   max_applications_per_day: 30
   max_per_portal: 10
   generate_cover_letter: true
-  save_screenshots: true       # screenshot after each apply for verification
+  save_screenshots: true
 
-# Portal settings
 portals:
   naukri:
     enabled: true
@@ -83,26 +77,31 @@ portals:
     auto_apply: true
   linkedin:
     enabled: true
-    auto_apply: false          # scrape-only (aggressive bot detection)
+    auto_apply: false
   glassdoor:
     enabled: true
-    auto_apply: false          # scrape-only
+    auto_apply: false
+  adzuna:
+    enabled: true
+    auto_apply: false          # Adzuna is scrape + score; apply via direct link
+    app_id: "78c0615d"
+    app_key: "2d44055e8669bad64cdff1d44023254c"
+    country: "in"              # India
+    results_per_page: 50
+    max_pages: 5               # 50 x 5 = 250 jobs per search term
 
-# Scheduling
 schedule:
   enabled: false
   cron_hour: 9
   cron_minute: 0
   timezone: "Asia/Kolkata"
 
-# Browser settings
 browser:
   headless: true
-  slow_mo: 100                 # ms between actions
-  timeout: 30000               # ms page load timeout
-  state_dir: "browser_state"   # persistent session storage
+  slow_mo: 100
+  timeout: 30000
+  state_dir: "browser_state"
 
-# Notifications
 notifications:
   email:
     enabled: false
