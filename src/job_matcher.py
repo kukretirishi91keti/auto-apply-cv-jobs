@@ -21,7 +21,12 @@ class MatchResult:
     reasoning: str = ""
     should_apply: bool = False
     used_ai: bool = False
+    fast_passed: bool = False   # NEW: True if title fast-pass bypassed keyword filter
 
+
+# ---------------------------------------------------------------------------
+# Abbreviation expansion
+# ---------------------------------------------------------------------------
 
 _ABBREVIATIONS = {
     "avp": "assistant vice president",
@@ -38,8 +43,20 @@ _ABBREVIATIONS = {
     "dgm": "deputy general manager",
     "gtm": "go to market",
     "bfsi": "banking financial services insurance",
+    "d2c": "direct to consumer",
+    "b2c": "business to consumer",
+    "b2b": "business to business",
+    "plg": "product led growth",
+    "crm": "customer relationship management",
+    "roi": "return on investment",
+    "kpi": "key performance indicator",
+    "p&l": "profit and loss",
+    "seo": "search engine optimisation",
+    "sem": "search engine marketing",
+    "atl": "above the line",
+    "btl": "below the line",
+    "imc": "integrated marketing communications",
 }
-
 
 _ABBR_BY_LENGTH = sorted(_ABBREVIATIONS.items(), key=lambda x: -len(x[1]))
 
@@ -47,7 +64,7 @@ _ABBR_BY_LENGTH = sorted(_ABBREVIATIONS.items(), key=lambda x: -len(x[1]))
 def _expand_text(text: str) -> set[str]:
     """Return all words from text plus abbreviation expansions (both directions)."""
     text_lower = text.lower()
-    words = set(re.findall(r"[a-z0-9]+", text_lower))
+    words = set(re.findall(r"[a-z0-9&]+", text_lower))
     extra: set[str] = set()
     consumed: set[str] = set()
     for abbr, full in _ABBR_BY_LENGTH:
@@ -61,18 +78,76 @@ def _expand_text(text: str) -> set[str]:
     return words | extra
 
 
+# ---------------------------------------------------------------------------
+# Title fast-pass
+# ---------------------------------------------------------------------------
+
+# If job title contains a seniority signal + domain signal → send to AI directly,
+# bypassing keyword scoring. One word from each set is enough.
+_SENIORITY_SIGNALS = {
+    "vp", "vice", "president",
+    "svp", "evp", "avp",
+    "head",
+    "director",
+    "chief",
+    "cmo", "coo", "ceo", "cto",
+    "lead",          # "Marketing Lead" at senior level
+    "principal",
+}
+
+_DOMAIN_SIGNALS = {
+    # Marketing & Brand
+    "marketing", "brand", "branding",
+    # Digital & Growth
+    "digital", "growth", "acquisition",
+    "performance", "demand", "funnel",
+    # Product
+    "product", "platform",
+    # BFSI / Sector
+    "insurance", "bfsi", "fintech", "insurtech",
+    "banking", "financial", "wealth",
+    # Consulting / Strategy
+    "consulting", "strategy", "transformation",
+    "advisory", "business",
+    # Content & Comms
+    "content", "communications", "pr",
+    "media",
+}
+
+
+def _title_fast_pass(job_title: str) -> bool:
+    """Return True if job title alone warrants sending to AI.
+
+    Rule: must have at least one seniority word AND one domain word.
+    This catches roles like:
+      - "VP – Brand & Growth"  (has "vp" + "brand")
+      - "Head of Digital"      (has "head" + "digital")
+      - "Director – FinTech Marketing" (has "director" + "fintech"/"marketing")
+      - "Chief Marketing Officer" (has "chief" + "marketing")
+    """
+    title_words = _expand_text(job_title)
+    has_seniority = bool(title_words & _SENIORITY_SIGNALS)
+    has_domain = bool(title_words & _DOMAIN_SIGNALS)
+    return has_seniority and has_domain
+
+
+# ---------------------------------------------------------------------------
+# Keyword scoring  (Stage 1 — only runs if fast-pass fails)
+# ---------------------------------------------------------------------------
+
 def keyword_score(job_title: str, job_description: str, keywords: list[str]) -> float:
     """Stage 1: Fast keyword matching (free).
 
-    Returns 0.0-1.0. Uses word-level matching with abbreviation expansion.
-    Each keyword phrase is split into words, and ALL words must appear in
-    the text (in any order). Handles: "VP of Growth" ↔ "VP Growth",
-    "Assistant Vice President" ↔ "AVP", etc.
+    CHANGED v2: Uses OR logic within multi-word terms.
+    A term like "VP Marketing" now matches if ANY of its words ("vp" OR "marketing")
+    appear in the text — not requiring all words.  This stops "VP – Brand & Growth"
+    being rejected because "marketing" wasn't literally present.
+
+    Returns 0.0–1.0.
     """
     if not keywords:
         return 1.0
 
-    # Split compound keywords on commas
     terms: list[str] = []
     for kw in keywords:
         for part in kw.split(","):
@@ -89,7 +164,8 @@ def keyword_score(job_title: str, job_description: str, keywords: list[str]) -> 
     matches = 0
     for term in terms:
         term_words = _expand_text(term)
-        if term_words and term_words.issubset(text_words):
+        # OR logic: match if ANY word from the term appears in text
+        if term_words and term_words & text_words:
             matches += 1
 
     if matches == 0:
@@ -98,6 +174,10 @@ def keyword_score(job_title: str, job_description: str, keywords: list[str]) -> 
     raw_score = matches / len(terms)
     return max(raw_score, 0.3)
 
+
+# ---------------------------------------------------------------------------
+# AI scoring  (Stage 2)
+# ---------------------------------------------------------------------------
 
 def ai_score_job(
     job_title: str,
@@ -180,12 +260,15 @@ REASON: <one sentence>"""
         elif line.startswith("REASON:"):
             reason = line.split(":", 1)[1].strip()
 
-    # Validate CV name
     if cv_name not in cv_texts and cv_texts:
         cv_name = next(iter(cv_texts))
 
     return min(max(score, 0.0), 1.0), cv_name, reason
 
+
+# ---------------------------------------------------------------------------
+# Pre-filters  (Stage 0 — free, instant)
+# ---------------------------------------------------------------------------
 
 _JUNIOR_TITLE_PATTERNS = [
     "intern", "trainee", "apprentice", "fresher", "entry level",
@@ -200,18 +283,23 @@ _NON_INDIA_LOCATIONS = [
     "california", "texas", "florida", "illinois", "colorado",
     "united kingdom", ", uk", "london", "manchester", "berlin",
     "paris", "amsterdam", "toronto", "vancouver", "sydney",
-    "melbourne", "singapore", "hong kong", "tokyo", "dubai",
+    "melbourne", "tokyo",
+    # NOTE: singapore, hong kong, dubai removed — Rishi is open to global relocation
+    # and these are plausible targets. AI scorer handles them with geography rules.
 ]
 
 
 def _is_non_india_location(location: str) -> bool:
-    """Quick check: reject jobs with clearly non-India locations."""
+    """Quick check: reject jobs with clearly non-India / non-target locations."""
     if not location:
         return False
     loc_lower = location.lower()
-    india_hints = ["india", "bangalore", "bengaluru", "mumbai", "delhi",
-                   "hyderabad", "chennai", "pune", "gurugram", "gurgaon",
-                   "noida", "kolkata", "ahmedabad", "jaipur"]
+    india_hints = [
+        "india", "bangalore", "bengaluru", "mumbai", "delhi",
+        "hyderabad", "chennai", "pune", "gurugram", "gurgaon",
+        "noida", "kolkata", "ahmedabad", "jaipur", "remote",
+        "singapore", "dubai", "hong kong",   # kept — open to global relocation
+    ]
     if any(h in loc_lower for h in india_hints):
         return False
     return any(p in loc_lower for p in _NON_INDIA_LOCATIONS)
@@ -225,6 +313,16 @@ def _is_seniority_mismatch(job_title: str, experience_years: int) -> bool:
     return any(pat in title_lower for pat in _JUNIOR_TITLE_PATTERNS)
 
 
+def _is_excluded_title(job_title: str, excluded_patterns: list[str]) -> bool:
+    """Check config excluded_title_patterns."""
+    title_lower = job_title.lower()
+    return any(pat.lower() in title_lower for pat in excluded_patterns)
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
 def match_job(
     job_title: str,
     job_description: str,
@@ -233,30 +331,70 @@ def match_job(
     creds: Credentials,
     job_location: str = "",
 ) -> MatchResult:
-    """Run two-stage matching pipeline."""
-    # Stage 0a: Seniority filter (free, instant)
+    """Run two-stage matching pipeline.
+
+    Stage 0a — seniority mismatch filter   (free, instant)
+    Stage 0b — location filter             (free, instant)
+    Stage 0c — excluded title filter       (free, instant)
+    Stage 0d — title fast-pass check       (free, instant)
+      → if title has seniority + domain signal: skip to Stage 2
+      → else: run Stage 1
+    Stage 1  — keyword filter              (free, fast)
+    Stage 2  — Claude AI scoring           (paid, smart)
+    """
+
+    # --- Stage 0a: Junior seniority filter ---
     if _is_seniority_mismatch(job_title, config.search.experience_years):
-        logger.debug("Job '%s' rejected — junior title for %d-year candidate", job_title, config.search.experience_years)
+        logger.debug(
+            "Job '%s' rejected — junior title for %d-year candidate",
+            job_title, config.search.experience_years,
+        )
         return MatchResult(keyword_score=0.0, should_apply=False)
 
-    # Stage 0b: Location filter (free, instant) — skip obviously non-India jobs
+    # --- Stage 0b: Location filter ---
     if _is_non_india_location(job_location):
-        logger.debug("Job '%s' rejected — non-India location: %s", job_title, job_location)
+        logger.debug("Job '%s' rejected — non-target location: %s", job_title, job_location)
         return MatchResult(keyword_score=0.0, should_apply=False)
 
-    # Stage 1: Keyword filter
-    kw_score = keyword_score(job_title, job_description, config.search.keywords)
+    # --- Stage 0c: Config excluded title patterns ---
+    excluded_patterns = getattr(config.search, "excluded_title_patterns", [])
+    if excluded_patterns and _is_excluded_title(job_title, excluded_patterns):
+        logger.debug("Job '%s' rejected — excluded title pattern", job_title)
+        return MatchResult(keyword_score=0.0, should_apply=False)
 
-    if kw_score < config.matching.keyword_min_score:
-        logger.debug("Job '%s' failed keyword filter (%.2f < %.2f)", job_title, kw_score, config.matching.keyword_min_score)
-        return MatchResult(keyword_score=kw_score, should_apply=False)
+    # --- Stage 0d: Title fast-pass ---
+    # If the title already signals seniority + domain, skip keyword scoring
+    # and go straight to AI.  This prevents good jobs being dropped because
+    # their description doesn't happen to contain our keyword phrases.
+    fast_passed = _title_fast_pass(job_title)
 
-    # Stage 2: AI scoring
+    if fast_passed:
+        logger.debug("Job '%s' fast-passed to AI (title signal matched)", job_title)
+        kw_score = 0.5   # neutral score — wasn't keyword-filtered
+    else:
+        # --- Stage 1: Keyword filter ---
+        kw_score = keyword_score(job_title, job_description, config.search.keywords)
+
+        if kw_score < config.matching.keyword_min_score:
+            logger.debug(
+                "Job '%s' failed keyword filter (%.2f < %.2f)",
+                job_title, kw_score, config.matching.keyword_min_score,
+            )
+            return MatchResult(keyword_score=kw_score, should_apply=False)
+
+    # --- Stage 2: AI scoring ---
     try:
-        score, cv_name, reason = ai_score_job(job_title, job_description, cv_texts, config, creds)
+        score, cv_name, reason = ai_score_job(
+            job_title, job_description, cv_texts, config, creds
+        )
     except Exception as e:
         logger.warning("AI scoring failed for '%s': %s", job_title, e)
-        return MatchResult(keyword_score=kw_score, should_apply=False, reasoning=str(e))
+        return MatchResult(
+            keyword_score=kw_score,
+            should_apply=False,
+            reasoning=str(e),
+            fast_passed=fast_passed,
+        )
 
     should_apply = score >= config.matching.ai_min_score
 
@@ -267,4 +405,5 @@ def match_job(
         reasoning=reason,
         should_apply=should_apply,
         used_ai=True,
+        fast_passed=fast_passed,
     )
