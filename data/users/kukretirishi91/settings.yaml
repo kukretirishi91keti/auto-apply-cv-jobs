@@ -1,88 +1,86 @@
-search:
-  keywords:
-    - "VP Marketing"
-    - "Head of Marketing"
-    - "Head of Growth"
-    - "VP Growth"
-    - "Director Marketing"
-    - "Head of Brand"
-    - "VP Brand"
-    - "Marketing Head"
-    - "Head of Digital Marketing"
-    - "Head of AI Marketing"
-  locations:
-    - "Delhi NCR"
-    - "Gurgaon"
-    - "Noida"
-    - "Mumbai"
-    - "Bangalore"
-  experience_years: 10
-  min_salary: 0
-  excluded_companies: []
-
-cvs:
-  directory: "data/users/kukretirishi91/cvs"
-  versions:
-    - name: "BFSI_Leadership"
-      file: "RishiKukreti_BFSI_Leadership.pdf"
-      description: "BFSI, insurance, regulated environments, P&L, product leadership"
-    - name: "Growth_Digital"
-      file: "RishiKukreti_Growth_Digital.pdf"
-      description: "Digital growth, performance marketing, MarTech, PLG, CAC/CLV"
-    - name: "Brand_Marketing"
-      file: "RishiKukreti_Brand_Digital_Marketing.pdf"
-      description: "Brand equity, integrated campaigns, consumer insights, ATL/BTL"
-    - name: "Consulting_Transformation"
-      file: "RishiKukreti_Consulting_Transformation.pdf"
-      description: "Business consulting, transformation programmes, programme management"
-
-matching:
-  keyword_min_score: 0.1
-  ai_min_score: 0.65
-  ai_model: "claude-sonnet-4-20250514"
-  max_ai_scorings_per_day: 200
-  api_budget_usd: 5.00
-
 apply:
+  generate_cover_letter: true
   max_applications_per_day: 30
   max_per_portal: 15
-  generate_cover_letter: true
   save_screenshots: true
-
-portals:
-  linkedin:
-    enabled: true
-    auto_apply: false
-  naukri:
-    enabled: true
-    auto_apply: true
-  indeed:
-    enabled: false
-    auto_apply: false
-  foundit:
-    enabled: false
-    auto_apply: false
-  ziprecruiter:
-    enabled: false
-    auto_apply: false
-  glassdoor:
-    enabled: false
-    auto_apply: false
-
-schedule:
-  enabled: false
-  cron_hour: 9
-  cron_minute: 0
-  timezone: "Asia/Kolkata"
-
 browser:
   headless: true
   slow_mo: 100
+  state_dir: browser_state
   timeout: 30000
-  state_dir: "browser_state"
-
+cvs:
+  directory: data/users/kukretirishi91/cvs
+  versions:
+  - description: BFSI, insurance, regulated environments, P&L, product leadership
+    file: RishiKukreti_BFSI_Leadership.pdf
+    name: BFSI_Leadership
+  - description: Digital growth, performance marketing, MarTech, PLG, CAC/CLV
+    file: RishiKukreti_Growth_Digital.pdf
+    name: Growth_Digital
+  - description: Brand equity, integrated campaigns, consumer insights, ATL/BTL
+    file: RishiKukreti_Brand_Digital_Marketing.pdf
+    name: Brand_Marketing
+  - description: Business consulting, transformation programmes, programme management
+    file: RishiKukreti_Consulting_Transformation.pdf
+    name: Consulting_Transformation
+matching:
+  ai_min_score: 0.85
+  ai_model: claude-sonnet-4-20250514
+  api_budget_usd: 5.0
+  keyword_min_score: 0.1
+  max_ai_scorings_per_day: 200
 notifications:
   email:
     enabled: false
   slack:
     enabled: false
+portals:
+  foundit:
+    auto_apply: false
+    enabled: false
+  glassdoor:
+    auto_apply: false
+    enabled: false
+  indeed:
+    auto_apply: false
+    enabled: false
+  linkedin:
+    auto_apply: false
+    enabled: true
+  naukri:
+    auto_apply: true
+    enabled: true
+  ziprecruiter:
+    auto_apply: false
+    enabled: false
+schedule:
+  cron_hour: 9
+  cron_minute: 0
+  enabled: false
+  timezone: Asia/Kolkata
+search:
+  excluded_companies:
+  - HINDUSTAN RECRUITMENT
+  - People, Jobs, and News
+  - Shine.com
+  - Recex.co
+  - Confidential
+  experience_years: 10
+  keywords:
+  - VP Marketing
+  - Head of Marketing
+  - Head of Growth
+  - VP Growth
+  - Director Marketing
+  - Head of Brand
+  - VP Brand
+  - Marketing Head
+  - Head of Digital Marketing
+  - Head of AI Marketing
+  locations:
+  - Delhi NCR
+  - Gurgaon
+  - Noida
+  - Mumbai
+  - Bangalore
+  min_salary: 0
