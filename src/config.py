@@ -75,6 +75,12 @@ class ApplyConfig(BaseModel):
 class PortalConfig(BaseModel):
     enabled: bool = True
     auto_apply: bool = True
+    # Adzuna-specific (ignored by other portals)
+    app_id: str = ""
+    app_key: str = ""
+    country: str = "in"
+    results_per_page: int = 50
+    max_pages: int = 5
 
 
 class ScheduleConfig(BaseModel):
