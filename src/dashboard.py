@@ -2337,12 +2337,9 @@ def main() -> None:
         _setup_user_session(st.session_state.user_id)
     else:
         # Single-user: original behavior (no login)
-        st.set_page_config(page_title="Auto-Apply Dashboard", page_icon="📋", layout="wide")
         _setup_default_session()
 
     # ── Authenticated (or single-user) — render dashboard ──
-    if multi_user:
-        st.set_page_config(page_title="Auto-Apply Dashboard", page_icon="📋", layout="wide")
 
     # Sidebar
     st.sidebar.title("Auto-Apply CV Jobs")

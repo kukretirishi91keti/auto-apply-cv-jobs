@@ -51,12 +51,12 @@ class AdzunaScraper:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         portal_cfg = config.portals.get("adzuna", {})
-        self.app_id: str = portal_cfg.get("app_id", "")
-        self.app_key: str = portal_cfg.get("app_key", "")
-        self.country: str = portal_cfg.get("country", "in")
-        self.results_per_page: int = int(portal_cfg.get("results_per_page", 50))
-        self.max_pages: int = int(portal_cfg.get("max_pages", 5))
-        self.enabled: bool = portal_cfg.get("enabled", False)
+        self.app_id: str = getattr(portal_cfg, "app_id", "")
+        self.app_key: str = getattr(portal_cfg, "app_key", "")
+        self.country: str = getattr(portal_cfg, "country", "in")
+        self.results_per_page: int = int(getattr(portal_cfg, "results_per_page", 50))
+        self.max_pages: int = int(getattr(portal_cfg, "max_pages", 5))
+        self.enabled: bool = getattr(portal_cfg, "enabled", False)
 
         if not self.app_id or not self.app_key:
             raise ValueError(
@@ -173,12 +173,7 @@ class AdzunaScraper:
             "content-type": "application/json",
         }
 
-        # Add experience/seniority filters if available
-        exp_years = getattr(self.config.search, "experience_years", 0)
-        if exp_years >= 8:
-            # Adzuna salary proxy for seniority — jobs above ~20 LPA (INR)
-            # 2_000_000 INR ≈ 20 LPA — filters out junior noise
-            params["salary_min"] = 2_000_000
+        # Seniority filtering handled downstream by AI scorer, not salary proxy
 
         try:
             resp = requests.get(url, params=params, timeout=15)

@@ -39,19 +39,21 @@ search:
 cvs:
   directory: "data/cvs"
   versions:
-    - name: "brand_bfsi"
-      file: "CV_Talentfit.in.pdf"
-      description: "Brand development, BFSI marketing, celebrity partnerships, insurance"
+    - name: "bfsi_leadership"
+      file: "RishiKukreti_BFSI_Leadership.pdf"
+      description: "BFSI and insurance sector leadership, AVP at Axis Max Life, product P&L, distribution, reinsurance, IRDAI compliance, pension fund management"
     - name: "growth_digital"
-      file: "CV_Prime_Video_&_Amazon_MGM_Studios.pdf"
-      description: "Growth leadership, digital marketing, user acquisition, content strategy"
-    - name: "general"
-      file: "Rishi Kukreti CV.pdf"
-      description: "General marketing, product management, business strategy"
-
+      file: "RishiKukreti_Growth_Digital.pdf"
+      description: "Growth and digital marketing leadership, 6x digital revenue, product-led growth, MarTech stack, CAC CLV optimisation, performance marketing, AI automation, FinTech InsurTech"
+    - name: "brand_marketing"
+      file: "RishiKukreti_Brand_Digital_Marketing.pdf"
+      description: "Brand strategy and integrated marketing, ATL BTL campaigns, celebrity partnerships Rohit Sharma Virat Kohli, consumer research IPQ IRIS, media planning, FMCG D2C agencies"
+    - name: "consulting_transformation"
+      file: "RishiKukreti_Consulting_Transformation.pdf"
+      description: "Business consulting and transformation, programme management, operating model design, change management, strategic business analysis, go-to-market advisory"
 matching:
   keyword_min_score: 0.3
-  ai_min_score: 0.7
+  ai_min_score: 0.80
   ai_model: "claude-sonnet-4-20250514"
   max_ai_scorings_per_day: 500
   api_budget_usd: 5.00
