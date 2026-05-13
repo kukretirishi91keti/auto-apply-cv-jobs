@@ -267,6 +267,44 @@ REASON: <one sentence>"""
 
 
 # ---------------------------------------------------------------------------
+# Required function filter — reject pure tech/ops roles regardless of seniority
+# ---------------------------------------------------------------------------
+
+_REQUIRED_FUNCTION_SIGNALS = {
+    "marketing", "brand", "growth", "digital", "strategy", "consulting",
+    "transformation", "product", "demand", "acquisition", "campaign",
+    "communications", "commercial", "revenue", "go-to-market", "gtm",
+    "content", "media", "performance", "analytics", "insights", "research",
+    "distribution", "partnerships", "business development",
+}
+
+_HARD_TECH_SIGNALS = {
+    "devops", "ansible", "kubernetes", "docker", "terraform", "ci/cd",
+    "infrastructure", "site reliability", "sre", "backend", "frontend",
+    "full stack", "software engineer", "data engineer", "ml engineer",
+    "machine learning engineer", "data scientist", "cybersecurity",
+    "network engineer", "cloud engineer", "platform engineer",
+    "windows admin", "linux admin",
+}
+
+
+def _is_wrong_function(job_title: str, job_description: str) -> bool:
+    """Reject roles that are clearly tech/ops with no marketing function overlap."""
+    combined = f"{job_title} {job_description[:500]}".lower()
+    title_lower = job_title.lower()
+
+    # Hard reject if title contains a tech signal
+    if any(sig in title_lower for sig in _HARD_TECH_SIGNALS):
+        return True
+
+    # Soft reject: JD has heavy tech signals AND zero function signals
+    tech_hits = sum(1 for sig in _HARD_TECH_SIGNALS if sig in combined)
+    func_hits = sum(1 for sig in _REQUIRED_FUNCTION_SIGNALS if sig in combined)
+
+    return tech_hits >= 3 and func_hits == 0
+
+
+# ---------------------------------------------------------------------------
 # Pre-filters  (Stage 0 — free, instant)
 # ---------------------------------------------------------------------------
 
@@ -354,6 +392,11 @@ def match_job(
     # --- Stage 0b: Location filter ---
     if _is_non_india_location(job_location):
         logger.debug("Job '%s' rejected — non-target location: %s", job_title, job_location)
+        return MatchResult(keyword_score=0.0, should_apply=False)
+
+    # --- Stage 0b.5: Wrong function filter ---
+    if _is_wrong_function(job_title, job_description):
+        logger.debug("Job '%s' rejected — wrong function (tech/ops role)", job_title)
         return MatchResult(keyword_score=0.0, should_apply=False)
 
     # --- Stage 0c: Config excluded title patterns ---
