@@ -1,127 +1,137 @@
+# Auto-Apply CV Jobs Configuration
+
+search:
+  keywords:
+    # Search terms (also used for keyword scoring)
+    - "VP Marketing, Head of Marketing, Marketing Head"
+    - "VP Brand, Head of Brand, Brand Head, Brand Director"
+    - "VP Digital, Head of Digital Marketing, Digital Head"
+    - "VP Growth, Head of Growth, Growth Director"
+    - "CMO, Chief Marketing Officer"
+    - "Director Marketing, Director Brand, Director Digital"
+    # Domain/sector scoring keywords (not used as search queries)
+    - "BFSI Marketing, Insurance Marketing, FinTech Marketing"
+    - "Performance Marketing, Growth Marketing, Demand Generation"
+    - "Product Marketing, Platform Marketing"
+    - "Marketing Transformation, Digital Transformation"
+  locations:
+    - "Bangalore"
+    - "Mumbai"
+    - "Delhi NCR"
+    - "Hyderabad"
+    - "Remote"
+  experience_years: 10
+  seniority_levels:
+    - "senior"
+    - "director"
+    - "vp"
+  min_salary: 0
+  excluded_companies:
+    - "example-spam-company"
+  excluded_title_patterns:
+    - "Senior Manager"
+    - "Associate Director"
+    - "Assistant Manager"
+    - "Executive"
+    - "Trainee"
+    - "Intern"
+    - "Designer"
+    - "Art Director"
+    - "Creative Director"
+    - "Copywriter"
+    - "Motion Design"
+    - "Visual Communication"
+    - "Content Writer"
+    - "Social Media Manager"
+    - "Social Media Lead"
+    - "Sales Manager"
+    - "Account Manager"
+    - "Accounts Manager"
+    - "Territory Head"
+    - "Area Sales"
+    - "Regional Sales"
+    - "Campaign Manager"
+    - "Content Marketer"
+    - "Content Strategy"
+    - "Lead Generation"
+    - "Business Development Manager"
+    - "Business Controller"
+    - "Sales Enablement"
+    - "Media Buyer"
+    - "Trade Marketing"
+    - "Influencer Marketing"
+    - "PR Manager"
+
+cvs:
+  directory: "data/cvs"
+  versions:
+    - name: "bfsi_leadership"
+      file: "RishiKukreti_BFSI_Leadership.pdf"
+      description: "BFSI and insurance sector leadership, AVP at Axis Max Life, product P&L, distribution, reinsurance, IRDAI compliance, pension fund management"
+    - name: "growth_digital"
+      file: "RishiKukreti_Growth_Digital.pdf"
+      description: "Growth and digital marketing leadership, 6x digital revenue, product-led growth, MarTech stack, CAC CLV optimisation, performance marketing, AI automation, FinTech InsurTech"
+    - name: "brand_marketing"
+      file: "RishiKukreti_Brand_Digital_Marketing.pdf"
+      description: "Brand strategy and integrated marketing, ATL BTL campaigns, celebrity partnerships Rohit Sharma Virat Kohli, consumer research IPQ IRIS, media planning, FMCG D2C agencies"
+    - name: "consulting_transformation"
+      file: "RishiKukreti_Consulting_Transformation.pdf"
+      description: "Business consulting and transformation, programme management, operating model design, change management, strategic business analysis, go-to-market advisory"
+matching:
+  keyword_min_score: 0.3
+  ai_min_score: 0.80
+  ai_model: "claude-sonnet-4-20250514"
+  max_ai_scorings_per_day: 500
+  api_budget_usd: 5.00
+
 apply:
-  generate_cover_letter: true
   max_applications_per_day: 30
-  max_per_portal: 25
+  max_per_portal: 10
+  generate_cover_letter: true
   save_screenshots: true
+
+portals:
+  naukri:
+    enabled: true
+    auto_apply: true
+  indeed:
+    enabled: true
+    auto_apply: true
+  foundit:
+    enabled: true
+    auto_apply: true
+  ziprecruiter:
+    enabled: true
+    auto_apply: true
+  linkedin:
+    enabled: true
+    auto_apply: false
+  glassdoor:
+    enabled: true
+    auto_apply: false
+  adzuna:
+    enabled: true
+    auto_apply: false          # Adzuna is scrape + score; apply via direct link
+    app_id: "78c0615d"
+    app_key: "2d44055e8669bad64cdff1d44023254c"
+    country: "in"              # India
+    results_per_page: 50
+    max_pages: 5               # 50 x 5 = 250 jobs per search term
+
+schedule:
+  enabled: false
+  cron_hour: 9
+  cron_minute: 0
+  timezone: "Asia/Kolkata"
+
 browser:
   headless: true
   slow_mo: 100
-  state_dir: browser_state
   timeout: 30000
-cvs:
-  directory: data/cvs
-  versions:
-  - name: BFSI_Leadership
-    file: RishiKukreti_BFSI_Leadership.pdf
-    description: BFSI, insurance, regulated environments, P&L, product leadership
-  - name: Growth_Digital
-    file: RishiKukreti_Growth_Digital.pdf
-    description: Digital growth, performance marketing, MarTech, PLG, CAC/CLV
-  - name: Brand_Marketing
-    file: RishiKukreti_Brand_Digital_Marketing.pdf
-    description: Brand equity, integrated campaigns, consumer insights, ATL/BTL
-  - name: Consulting_Transformation
-    file: RishiKukreti_Consulting_Transformation.pdf
-    description: Business consulting, transformation programmes, programme management
-matching:
-  ai_min_score: 0.6
-  ai_model: claude-sonnet-4-20250514
-  api_budget_usd: 5.0
-  keyword_min_score: 0.5
-  max_ai_scorings_per_day: 200
+  state_dir: "browser_state"
+
 notifications:
   email:
     enabled: false
   slack:
     enabled: false
-portals:
-  foundit:
-    auto_apply: false
-    enabled: false
-  glassdoor:
-    auto_apply: false
-    enabled: false
-  indeed:
-    auto_apply: false
-    enabled: false
-  linkedin:
-    auto_apply: false
-    enabled: true
-  naukri:
-    auto_apply: true
-    enabled: true
-  ziprecruiter:
-    auto_apply: false
-    enabled: false
-schedule:
-  cron_hour: 9
-  cron_minute: 0
-  enabled: false
-  timezone: Asia/Kolkata
-search:
-  excluded_companies:
-  - Axis Max Life Insurance
-  - Tata Consultancy Services
-  experience_years: 10
-  keywords:
-  - VP Marketing
-  - Head of Marketing
-  - Head of Growth
-  - VP Growth
-  - Director Marketing
-  - Head of Brand
-  - VP Brand
-  - Marketing Head
-  - Head of Digital Marketing
-  - Head of AI Marketing
-  locations:
-  - Delhi NCR
-  - Gurgaon
-  - Noida
-  - Mumbai
-  - Bangalore
-  - Remote
-  - Luxembourg
-  - Spain
-  - Switzerland
-  - Germany
-  - Italy
-  - Dubai
-  - Singapore
-  - Prague
-  - Malta
-  - Serbia
-  min_salary: 0
-  excluded_title_patterns:
-  - Senior Manager
-  - Associate Director
-  - Assistant Manager
-  - Executive
-  - Trainee
-  - Intern
-education:
-- degree: MBA (Marketing & Strategy)
-  institution: NMIMS, Mumbai
-  year: '2018'
-  cgpa: 2.6/4
-  details: ''
-- degree: BTech ECE
-  institution: USICT, GGSIPU
-  year: '2014'
-  cgpa: 70%
-  details: ''
-- degree: BTech ECE
-  institution: USICT, GGSIPU
-  year: '2014'
-  cgpa: 70%
-  details: ''
-certifications:
-- name: 'National AI Olympiad Rank - National (8), State (1) '
-  issuer: TalentSprint, Accenture
-  year: '2025'
-- name: Advanced Certification in Space Technology
-  issuer: IISc, Bangalore
-  year: '2025'
-- name: Advanced Certification in Space Technology
-  issuer: IISc, Bangalore
-  year: '2025'
