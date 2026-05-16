@@ -21,6 +21,14 @@ class CVVersion(BaseModel):
     description: str
 
 
+class CandidateProfile(BaseModel):
+    name: str = ""
+    email: str = ""
+    phone: str = ""
+    location: str = ""
+    linkedin_url: str = ""
+
+
 class EducationEntry(BaseModel):
     degree: str = ""
     institution: str = ""
@@ -111,6 +119,7 @@ class NotificationsConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
+    candidate: CandidateProfile = Field(default_factory=CandidateProfile)
     search: SearchConfig = Field(default_factory=SearchConfig)
     cvs: CVConfig = Field(default_factory=CVConfig)
     education: list[EducationEntry] = Field(default_factory=list)

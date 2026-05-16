@@ -203,18 +203,24 @@ def render_jobs_feed() -> None:
     """Jobs Feed page — all discovered jobs with filters."""
     st.header("Jobs Feed")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         portal = st.selectbox("Portal", PORTALS, key="jf_portal")
     with col2:
         min_score = st.slider("Min Keyword Score", 0.0, 1.0, 0.0, 0.1, key="jf_score")
     with col3:
         days = st.selectbox("Last N days", [7, 14, 30, 90], key="jf_days")
+    with col4:
+        hide_non_india = st.checkbox("India only", value=True, key="jf_india_only")
 
     portal_filter = portal if portal != "All" else None
     score_filter = min_score if min_score > 0 else None
     jobs = get_jobs_feed(portal=portal_filter, min_score=score_filter, days=days)
     df = rows_to_df(jobs)
+
+    if hide_non_india and not df.empty and "location" in df.columns:
+        from src.job_matcher import _is_non_india_location
+        df = df[~df["location"].apply(lambda loc: _is_non_india_location(str(loc) if loc else ""))]
 
     st.metric("Jobs Found", len(df))
 
@@ -279,6 +285,30 @@ def render_applications() -> None:
 
 
 # ─── Page: Cloud Apply Assistant ───
+
+
+def _get_candidate_name() -> str:
+    """Get candidate name from config profile, fallback to session state."""
+    config = load_config(_config_path())
+    if config.candidate.name:
+        return config.candidate.name
+    user_name = st.session_state.get("user_name", "")
+    return re.sub(r"\.(pdf|docx?|txt)$", "", user_name, flags=re.IGNORECASE).strip()
+
+
+def _get_contact_info() -> str:
+    """Build contact line for CV header from config profile."""
+    config = load_config(_config_path())
+    parts = []
+    if config.candidate.email:
+        parts.append(config.candidate.email)
+    if config.candidate.phone:
+        parts.append(config.candidate.phone)
+    if config.candidate.location:
+        parts.append(config.candidate.location)
+    if config.candidate.linkedin_url:
+        parts.append(config.candidate.linkedin_url)
+    return "  |  ".join(parts)
 
 
 def _get_api_key() -> str:
@@ -675,6 +705,13 @@ def render_manual_queue() -> None:
         if dict(r).get("job_id") not in queue_ids:
             all_items.append(r)
 
+    # Filter out non-India jobs (old US entries from previous runs)
+    from src.job_matcher import _is_non_india_location
+    all_items = [
+        r for r in all_items
+        if not _is_non_india_location(str(dict(r).get("location", "") or ""))
+    ]
+
     if not all_items:
         st.info("No jobs in queue. Run a **Dry Run** first to discover and score jobs.")
         return
@@ -973,13 +1010,14 @@ def render_manual_queue() -> None:
                                     st.error(f"Failed: {e}")
                     else:
                         from src.pdf_generator import generate_cover_letter_pdf
-                        user_name = st.session_state.get("user_name", "")
-                        clean_name = re.sub(r"\.(pdf|docx?|txt)$", "", user_name, flags=re.IGNORECASE).strip()
-                        pdf = generate_cover_letter_pdf(saved_cl, title, company, clean_name)
+                        _cand_name = _get_candidate_name()
+                        pdf = generate_cover_letter_pdf(saved_cl, title, company, _cand_name)
+                        safe_name = _cand_name.replace(" ", "_") if _cand_name else "CoverLetter"
+                        safe_company = company.replace(" ", "_")
                         st.download_button(
                             "Download CL PDF",
                             pdf,
-                            file_name=f"CoverLetter_{company.replace(' ', '_')}.pdf",
+                            file_name=f"{safe_name}_CL_{safe_company}.pdf",
                             mime="application/pdf",
                             key=f"dl_cl_{job_id}_{card_idx}",
                         )
@@ -1001,13 +1039,15 @@ def render_manual_queue() -> None:
                                     st.error(f"Failed: {e}")
                     else:
                         from src.pdf_generator import generate_tailored_cv_pdf
-                        user_name = st.session_state.get("user_name", "")
-                        clean_name = re.sub(r"\.(pdf|docx?|txt)$", "", user_name, flags=re.IGNORECASE).strip()
-                        pdf = generate_tailored_cv_pdf(saved_cv, clean_name)
+                        _cand_name = _get_candidate_name()
+                        _contact = _get_contact_info()
+                        pdf = generate_tailored_cv_pdf(saved_cv, _cand_name, _contact)
+                        safe_name = _cand_name.replace(" ", "_") if _cand_name else "CV"
+                        safe_company = company.replace(" ", "_")
                         st.download_button(
                             "Download CV PDF",
                             pdf,
-                            file_name=f"CV_{company.replace(' ', '_')}.pdf",
+                            file_name=f"{safe_name}_{safe_company}.pdf",
                             mime="application/pdf",
                             key=f"dl_cv_{job_id}_{card_idx}",
                         )
@@ -1295,9 +1335,65 @@ def render_settings() -> None:
     st.header("Settings")
 
     # ── Tab layout ──
-    tab_cv, tab_edu, tab_creds, tab_search, tab_portals = st.tabs([
-        "CV Management", "Education", "Credentials", "Search Preferences", "Portal Config",
+    tab_profile, tab_cv, tab_edu, tab_creds, tab_search, tab_portals = st.tabs([
+        "Profile", "CV Management", "Education", "Credentials", "Search Preferences", "Portal Config",
     ])
+
+    # ── Profile (contact info for CV/CL header) ──
+    with tab_profile:
+        st.subheader("Your Profile")
+        st.caption(
+            "This info appears at the top of every generated CV and cover letter PDF. "
+            "Fill it in so recruiters can reach you directly from the downloaded PDF."
+        )
+
+        config = load_config(_config_path())
+        cp = config.candidate
+
+        with st.form("profile_form"):
+            c1, c2 = st.columns(2)
+            with c1:
+                p_name = st.text_input("Full Name", value=cp.name, placeholder="e.g. Rishi Kukreti")
+                p_email = st.text_input("Email", value=cp.email, placeholder="e.g. rishi@example.com")
+                p_phone = st.text_input("Phone", value=cp.phone, placeholder="e.g. +91-98765-43210")
+            with c2:
+                p_location = st.text_input("Location", value=cp.location, placeholder="e.g. Bangalore, India")
+                p_linkedin = st.text_input("LinkedIn URL", value=cp.linkedin_url, placeholder="e.g. linkedin.com/in/rishikukreti")
+
+            if st.form_submit_button("Save Profile", type="primary"):
+                if _config_path().exists():
+                    with open(_config_path()) as f:
+                        raw = yaml.safe_load(f) or {}
+                else:
+                    raw = {}
+
+                raw["candidate"] = {
+                    "name": p_name.strip(),
+                    "email": p_email.strip(),
+                    "phone": p_phone.strip(),
+                    "location": p_location.strip(),
+                    "linkedin_url": p_linkedin.strip(),
+                }
+
+                with open(_config_path(), "w") as f:
+                    yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
+
+                st.success("Profile saved! This info will appear on all generated PDFs.")
+                st.rerun()
+
+        if cp.name or cp.email:
+            st.divider()
+            st.markdown("**PDF header preview:**")
+            preview_parts = [cp.name or "(Name)"]
+            if cp.email:
+                preview_parts.append(cp.email)
+            if cp.phone:
+                preview_parts.append(cp.phone)
+            if cp.location:
+                preview_parts.append(cp.location)
+            if cp.linkedin_url:
+                preview_parts.append(cp.linkedin_url)
+            st.code("  |  ".join(preview_parts), language=None)
 
     # ── CV Management ──
     with tab_cv:
